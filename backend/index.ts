@@ -1,10 +1,11 @@
-import express from 'express';
-import { tavily } from '@tavily/core';
-import { PROMPT_TEMPLATE, SYSTEM_PROMPT } from './prompt';
-import { json, z } from 'zod';
-import { Output, streamText } from 'ai';
-import { google } from '@ai-sdk/google';
-import { groq } from '@ai-sdk/groq';
+import express from "express";
+import { tavily } from "@tavily/core";
+import { PROMPT_TEMPLATE, SYSTEM_PROMPT } from "./prompt";
+import { json, z } from "zod";
+import { Output, streamText } from "ai";
+import { google } from "@ai-sdk/google";
+import { groq } from "@ai-sdk/groq";
+import { prisma } from "./db";
 
 const client = tavily({ apiKey: process.env.TAVILY_API_KEY });
 const app = express();
@@ -12,13 +13,34 @@ app.use(express.json());
 
 // List of fallback models across Groq and Gemini
 const MODEL_PIPELINE = [
-    { name: 'Groq (GPT-OSS 120B)', instance: groq('openai/gpt-oss-120b') },
-    { name: 'Gemini (3.5 Flash)', instance: google('gemini-3.5-flash') },
-    { name: 'Groq (Llama 3.3 70B)', instance: groq('llama-3.3-70b-versatile') },
-    { name: 'Gemini (3.6 Flash)', instance: google('gemini-3.6-flash') },
+    { name: "Groq (GPT-OSS 120B)", instance: groq("openai/gpt-oss-120b") },
+    { name: "Gemini (3.5 Flash)", instance: google("gemini-3.5-flash") },
+    { name: "Groq (Llama 3.3 70B)", instance: groq("llama-3.3-70b-versatile") },
+    { name: "Gemini (3.6 Flash)", instance: google("gemini-3.6-flash") },
 ];
 
-app.post('/brex_ask', async (req, res) => {
+
+const res = await prisma.user.create({
+    data: {
+        email: "rudra2@gmail.com",
+        provider: "Google",
+        name: "Rudra2"
+    }
+})
+console.log("User created:", res);
+
+
+// Conversation history get endpoint
+app.get("/conversation_history", async(req, res) => {
+
+})
+
+// Conversation history post endpoint
+app.post("/conversation_history/:conversationId", async(req, res) => {
+
+})
+
+app.post("/brex_ask", async (req, res) => {
     //  step:1 -> get the query from user
     if (!req.body || !req.body.query) {
         return res.status(400).send("Missing query");
@@ -31,16 +53,19 @@ app.post('/brex_ask', async (req, res) => {
 
     //  step: 4 -> web search to gather resources
     const webSearchResponse = await client.search(query, {
-        searchDepth: "advanced"
-    })
+        searchDepth: "advanced",
+    });
 
     const websearchResult = webSearchResponse.results;
 
     //  step: 5 -> do some context engineering on the prompt
-    const prompt = PROMPT_TEMPLATE.replace('{{WEB_SEARCH_RESULTS}}', JSON.stringify(websearchResult)).replace('{{USER_QUERY}}', query);
+    const prompt = PROMPT_TEMPLATE.replace(
+        "{{WEB_SEARCH_RESULTS}}",
+        JSON.stringify(websearchResult),
+    ).replace("{{USER_QUERY}}", query);
 
     //  step: 6 -> hit the LLM and stream back the response
-   let activeStream = null;
+    let activeStream = null;
 
     for (const modelConfig of MODEL_PIPELINE) {
         try {
@@ -73,18 +98,30 @@ app.post('/brex_ask', async (req, res) => {
                 break;
             }
         } catch (error) {
-            console.warn(`[Fallback Warning] ${modelConfig.name} failed: ${(error as Error).message}`);
+            console.warn(
+                `[Fallback Warning] ${modelConfig.name} failed: ${(error as Error).message}`,
+            );
         }
     }
 
     if (!activeStream && !res.headersSent) {
-        return res.status(503).send("All AI models are currently busy. Please try again.");
+        return res
+            .status(503)
+            .send("All AI models are currently busy. Please try again.");
     }
-    res.write("\n\nSources\n________\n");
+    res.write("\n<SOURCES>\n");
     //  step: 7 -> also stream back the sources and the follow up questions for the user to ask (which we can get from another parallel LLM call)
-    res.write( JSON.stringify(websearchResult.map(result =>({url: result.url}))));
+    res.write(
+        JSON.stringify(websearchResult.map((result) => ({ url: result.url }))),
+    );
+    res.write("\n</Sources>\n")
     // step: 8 -> close the event stream
     res.end();
 });
-
-app.listen(3000)
+app.post("/brex_ask/follow_up", async(req, res) => {
+    //  step:1 -> get the query from userget the existing chat from db
+    //  step:2 -> forward the full history to the LLM
+    //  step:3 -> TODO: Do context engineering to make sure the LLM understands the context of the conversation
+    //  step:4 -> Stream the response to the user 
+})
+app.listen(3000);
