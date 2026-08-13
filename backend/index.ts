@@ -1,127 +1,509 @@
+// ---------------------------------------------------------------------------
+// Prisma schema additions required for this file (add to schema.prisma,
+// then `bunx prisma migrate dev --name add_credits`):
+//
+// model User {
+//   ...
+//   credits            Int       @default(100)
+//   lastCreditRefillAt DateTime?
+// }
+// ---------------------------------------------------------------------------
+
 import express from "express";
+import type { NextFunction, Request, Response } from "express";
 import { tavily } from "@tavily/core";
 import { PROMPT_TEMPLATE, SYSTEM_PROMPT } from "./prompt";
-import { json, z } from "zod";
-import { Output, streamText } from "ai";
+import { z } from "zod";
+import { streamText } from "ai";
 import { google } from "@ai-sdk/google";
-import { groq } from "@ai-sdk/groq";
 import { prisma } from "./db";
+import { middleware } from "./middleware";
+import cors from "cors";
 
 const client = tavily({ apiKey: process.env.TAVILY_API_KEY });
 const app = express();
+
+function asyncHandler<T extends (req: Request, res: Response, next: NextFunction) => Promise<any>>(
+    fn: T,
+) {
+    return (req: Request, res: Response, next: NextFunction) => {
+        Promise.resolve(fn(req, res, next)).catch(next);
+    };
+}
+
 app.use(express.json());
+app.use(cors());
 
-// List of fallback models across Groq and Gemini
-const MODEL_PIPELINE = [
-    { name: "Groq (GPT-OSS 120B)", instance: groq("openai/gpt-oss-120b") },
-    { name: "Gemini (3.5 Flash)", instance: google("gemini-3.5-flash") },
-    { name: "Groq (Llama 3.3 70B)", instance: groq("llama-3.3-70b-versatile") },
-    { name: "Gemini (3.6 Flash)", instance: google("gemini-3.6-flash") },
-];
+const DAILY_REFILL_CREDITS = Number(process.env.DAILY_REFILL_CREDITS) || 50;
+const REFILL_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
+async function refillDailyCreditsIfEligible(userId: string) {
+    const cutoff = new Date(Date.now() - REFILL_INTERVAL_MS);
 
-const res = await prisma.user.create({
-    data: {
-        email: "rudra2@gmail.com",
-        provider: "Google",
-        name: "Rudra2"
-    }
-})
-console.log("User created:", res);
-
-
-// Conversation history get endpoint
-app.get("/conversation_history", async(req, res) => {
-
-})
-
-// Conversation history post endpoint
-app.post("/conversation_history/:conversationId", async(req, res) => {
-
-})
-
-app.post("/brex_ask", async (req, res) => {
-    //  step:1 -> get the query from user
-    if (!req.body || !req.body.query) {
-        return res.status(400).send("Missing query");
-    }
-
-    const query = req.body.query;
-    //  step: 2 -> make sure user have enough credits to hit the endpoint
-
-    //  step: 3 (TODO) -> check if we have websearch indexed for similiar query
-
-    //  step: 4 -> web search to gather resources
-    const webSearchResponse = await client.search(query, {
-        searchDepth: "advanced",
+    const { count } = await prisma.user.updateMany({
+        where: {
+            id: userId,
+            OR: [{ lastCreditRefillAt: null }, { lastCreditRefillAt: { lte: cutoff } }],
+        },
+        data: {
+            credits: { increment: DAILY_REFILL_CREDITS },
+            lastCreditRefillAt: new Date(),
+        },
     });
 
-    const websearchResult = webSearchResponse.results;
+    if (count > 0) {
+        console.log(`[Credits] Refilled ${DAILY_REFILL_CREDITS} credits for user ${userId}`);
+    }
+}
 
-    //  step: 5 -> do some context engineering on the prompt
-    const prompt = PROMPT_TEMPLATE.replace(
-        "{{WEB_SEARCH_RESULTS}}",
-        JSON.stringify(websearchResult),
-    ).replace("{{USER_QUERY}}", query);
+const PORT = Number(process.env.PORT) || 3001;
+const MODEL_TIMEOUT_MS = Number(process.env.MODEL_TIMEOUT_MS) || 15_000;
 
-    //  step: 6 -> hit the LLM and stream back the response
-    let activeStream = null;
+// Pricing config for the active model
+const MODEL_CONFIG = {
+    inputCostPer1M: 0.1,
+    outputCostPer1M: 0.4,
+};
 
-    for (const modelConfig of MODEL_PIPELINE) {
+const ANSWER_OPEN = "<ANSWER>";
+const ANSWER_CLOSE = "</ANSWER>";
+const SOURCES_OPEN = "\n<SOURCES>\n";
+const SOURCES_CLOSE = "\n</SOURCES>\n";
+const FOLLOWUPS_OPEN = "\n<FOLLOW_UPS>\n";
+const FOLLOWUPS_CLOSE = "\n</FOLLOW_UPS>\n";
+
+// ---------- validation ----------
+
+const askSchema = z.object({
+    query: z.string().trim().min(1).max(2000),
+});
+
+const followUpSchema = z.object({
+    query: z.string().trim().min(1).max(2000),
+    conversationId: z.string().trim().min(1),
+});
+
+// ---------- shared helpers ----------
+
+async function searchAndTrim(query: string) {
+    const webSearchResponse = await client.search(query, { searchDepth: "advanced" });
+    const results = webSearchResponse.results;
+    const trimmed = results.map((r) => ({
+        title: r.title,
+        url: r.url,
+        content: r.content?.slice(0, 500),
+    }));
+    return { results, trimmed };
+}
+
+function writeSources(res: Response, results: { url: string }[]) {
+    res.write(SOURCES_OPEN);
+    res.write(JSON.stringify(results.map((r) => ({ url: r.url }))));
+    res.write(SOURCES_CLOSE);
+}
+
+async function pumpStreamToClient(
+    textStream: AsyncIterable<string>,
+    res: Response,
+    timeoutMs: number,
+): Promise<{ cleanAnswer: string; followUps: string[] }> {
+    const iterator = textStream[Symbol.asyncIterator]();
+    let buffer = "";
+    let cleanAnswer = "";
+    let tail = "";
+    let insideAnswer = false;
+    let sawAnswerTag = false;
+    let answerClosed = false;
+
+    const nextWithTimeout = () =>
+        Promise.race([
+            iterator.next(),
+            new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error("Model stream timed out")), timeoutMs),
+            ),
+        ]);
+
+    let result = await nextWithTimeout();
+
+    while (!result.done) {
+        if (answerClosed) {
+            tail += result.value;
+            result = await nextWithTimeout();
+            continue;
+        }
+
+        buffer += result.value;
+
+        if (!sawAnswerTag) {
+            const openIdx = buffer.indexOf(ANSWER_OPEN);
+            if (openIdx !== -1) {
+                sawAnswerTag = true;
+                insideAnswer = true;
+                buffer = buffer.slice(openIdx + ANSWER_OPEN.length);
+            } else {
+                if (buffer.length > ANSWER_OPEN.length * 2) {
+                    res.write(buffer);
+                    cleanAnswer += buffer;
+                    buffer = "";
+                }
+                result = await nextWithTimeout();
+                continue;
+            }
+        }
+
+        if (insideAnswer) {
+            const closeIdx = buffer.indexOf(ANSWER_CLOSE);
+            if (closeIdx !== -1) {
+                const chunk = buffer.slice(0, closeIdx);
+                res.write(chunk);
+                cleanAnswer += chunk;
+                insideAnswer = false;
+                answerClosed = true;
+                tail += buffer.slice(closeIdx + ANSWER_CLOSE.length);
+                buffer = "";
+            } else {
+                res.write(buffer);
+                cleanAnswer += buffer;
+                buffer = "";
+            }
+        }
+
+        result = await nextWithTimeout();
+    }
+
+    if (buffer.length > 0 && !answerClosed) {
+        res.write(buffer);
+        cleanAnswer += buffer;
+    }
+
+    const followUps = Array.from(tail.matchAll(/<question>([\s\S]*?)<\/question>/g)).map((m) =>
+        (m[1] ?? "").trim(),
+    );
+
+    return { cleanAnswer: cleanAnswer.trim(), followUps };
+}
+
+type StreamInput =
+    | { mode: "prompt"; prompt: string }
+    | { mode: "messages"; messages: { role: "user" | "assistant"; content: string }[] };
+
+async function streamResponse(
+    res: Response,
+    input: StreamInput,
+): Promise<{ started: boolean; cleanAnswer: string; followUps: string[]; costCredits: number }> {
+    try {
+        const candidateStream = streamText({
+            model: google("gemini-3.5-flash"),
+            system: SYSTEM_PROMPT,
+            ...(input.mode === "prompt"
+                ? { prompt: input.prompt }
+                : { messages: input.messages }),
+        });
+
+        const { cleanAnswer, followUps } = await pumpStreamToClient(
+            candidateStream.textStream,
+            res,
+            MODEL_TIMEOUT_MS,
+        );
+
+        const usage = await candidateStream.usage;
+        const inputTokens =
+            (usage as any).inputTokens ?? (usage as any).promptTokens ?? 0;
+        const outputTokens =
+            (usage as any).outputTokens ?? (usage as any).completionTokens ?? 0;
+
+        const costCredits = Math.max(
+            1,
+            Math.ceil(
+                (inputTokens / 1_000_000) * MODEL_CONFIG.inputCostPer1M +
+                    (outputTokens / 1_000_000) * MODEL_CONFIG.outputCostPer1M,
+            ),
+        );
+
+        return { started: true, cleanAnswer, followUps, costCredits };
+    } catch (error) {
+        console.error(`[AI Stream Error] ${(error as Error).message}`);
+        return { started: false, cleanAnswer: "", followUps: [], costCredits: 0 };
+    }
+}
+
+async function ensureHasCredits(userId: string) {
+    await refillDailyCreditsIfEligible(userId);
+
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { credits: true },
+    });
+    if (!user || user.credits <= 0) {
+        const err = new Error("Insufficient credits");
+        (err as any).code = "INSUFFICIENT_CREDITS";
+        throw err;
+    }
+}
+
+async function debitCredits(userId: string, costCredits: number) {
+    await prisma.user.update({
+        where: { id: userId },
+        data: { credits: { decrement: costCredits } },
+    });
+}
+
+// ---------- routes ----------
+
+app.get(
+    "/conversation_history",
+    middleware,
+    asyncHandler(async (req, res) => {
+        const conversations = await prisma.conversation.findMany({
+            where: { userId: req.userId! },
+            orderBy: { id: "desc" },
+            select: { id: true, title: true, slug: true },
+        });
+        res.json({ conversations });
+    }),
+);
+
+app.post(
+    "/conversation_history/:conversationId",
+    middleware,
+    asyncHandler(async (req, res) => {
+        const conversationId = req.params.conversationId;
+
+        if (typeof conversationId !== "string" || conversationId.length === 0) {
+            return res.status(400).json({ message: "Invalid conversationId" });
+        }
+
+        const conversation = await prisma.conversation.findFirst({
+            where: { id: conversationId, userId: req.userId! },
+            include: {
+                messages: {
+                    orderBy: { id: "asc" },
+                    select: { id: true, content: true, role: true, createdAt: true },
+                },
+            },
+        });
+
+        if (!conversation) {
+            return res.status(404).json({ message: "Conversation not found" });
+        }
+
+        res.json({ conversation });
+    }),
+);
+
+app.get(
+    "/credits/balance",
+    middleware,
+    asyncHandler(async (req, res) => {
+        await refillDailyCreditsIfEligible(req.userId!);
+        const user = await prisma.user.findUnique({
+            where: { id: req.userId! },
+            select: { credits: true },
+        });
+        res.json({ credits: user?.credits ?? 0 });
+    }),
+);
+
+app.post(
+    "/brex_ask",
+    middleware,
+    asyncHandler(async (req, res) => {
+        const parsed = askSchema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({ message: "Invalid request", issues: parsed.error.issues });
+        }
+        const { query } = parsed.data;
+
         try {
-            const candidateStream = streamText({
-                model: modelConfig.instance,
-                prompt: prompt,
-                system: SYSTEM_PROMPT,
-                // output: Output.object({
-                //     schema: z.object({
-                //         schema: z.object({
-                //             answer: z.string(),
-                //             followUps: z.array(z.string())
-                //         })
-                //     }),
-                // }),
+            await ensureHasCredits(req.userId!);
+        } catch (error) {
+            if ((error as any).code === "INSUFFICIENT_CREDITS") {
+                return res.status(402).json({ message: "Insufficient credits" });
+            }
+            console.error("[Credits Error]", error);
+            return res.status(500).json({ message: "Could not verify credits" });
+        }
+
+        let searchData;
+        try {
+            searchData = await searchAndTrim(query);
+        } catch (error) {
+            console.error("[Search Error]", error);
+            return res.status(502).send("Web search failed");
+        }
+
+        const prompt = PROMPT_TEMPLATE.replace(
+            "{{WEB_SEARCH_RESULTS}}",
+            JSON.stringify(searchData.trimmed),
+        ).replace("{{USER_QUERY}}", query);
+
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("X-Accel-Buffering", "no");
+
+        const { started, cleanAnswer, followUps, costCredits } = await streamResponse(res, {
+            mode: "prompt",
+            prompt,
+        });
+
+        if (!started) {
+            if (!res.headersSent) {
+                return res.status(503).send("AI service is currently unavailable. Please try again.");
+            } else {
+                res.write("\n[An error occurred while streaming the response.]\n");
+                return res.end();
+            }
+        }
+
+        try {
+            await debitCredits(req.userId!, costCredits);
+        } catch (e) {
+            console.error("[Credits Error] Failed to debit credits:", e);
+        }
+
+        const sourceUrls = searchData.results.map((r) => ({ url: r.url }));
+        writeSources(res, searchData.results);
+        res.write(FOLLOWUPS_OPEN);
+        res.write(JSON.stringify(followUps));
+        res.write(FOLLOWUPS_CLOSE);
+
+        try {
+            const slug = query.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60);
+            const title = query.slice(0, 100);
+
+            const conversation = await prisma.conversation.create({
+                data: {
+                    title,
+                    slug,
+                    userId: req.userId!,
+                    messages: {
+                        create: [
+                            { content: query, role: "User" },
+                            {
+                                content: cleanAnswer,
+                                role: "Assistant",
+                                sources: sourceUrls,
+                                followUps,
+                            },
+                        ],
+                    },
+                },
             });
 
-            // Verify the stream gets its first token before consuming it fully
-            const reader = candidateStream.textStream[Symbol.asyncIterator]();
-            const firstChunk = await reader.next();
-
-            if (!firstChunk.done) {
-                res.write(firstChunk.value);
-
-                for await (const textPart of candidateStream.textStream) {
-                    // process.stdout.write(textPart);
-                    res.write(textPart);
-                }
-                activeStream = candidateStream;
-                break;
-            }
-        } catch (error) {
-            console.warn(
-                `[Fallback Warning] ${modelConfig.name} failed: ${(error as Error).message}`,
-            );
+            res.write(`\n<CONVERSATION_ID>${conversation.id}</CONVERSATION_ID>\n`);
+        } catch (e) {
+            console.error("[DB Error] Failed to save conversation:", e);
         }
-    }
 
-    if (!activeStream && !res.headersSent) {
-        return res
-            .status(503)
-            .send("All AI models are currently busy. Please try again.");
+        res.end();
+    }),
+);
+
+app.post(
+    "/brex_ask/follow_up",
+    middleware,
+    asyncHandler(async (req, res) => {
+        const parsed = followUpSchema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({ message: "Invalid request", issues: parsed.error.issues });
+        }
+        const { query, conversationId } = parsed.data;
+
+        const conversation = await prisma.conversation.findFirst({
+            where: { id: conversationId, userId: req.userId! },
+            include: { messages: { orderBy: { id: "asc" } } },
+        });
+
+        if (!conversation) {
+            return res.status(404).json({ message: "Conversation not found" });
+        }
+
+        try {
+            await ensureHasCredits(req.userId!);
+        } catch (error) {
+            if ((error as any).code === "INSUFFICIENT_CREDITS") {
+                return res.status(402).json({ message: "Insufficient credits" });
+            }
+            console.error("[Credits Error]", error);
+            return res.status(500).json({ message: "Could not verify credits" });
+        }
+
+        const history = conversation.messages.map((msg) => ({
+            role: msg.role === "User" ? ("user" as const) : ("assistant" as const),
+            content: msg.content,
+        }));
+
+        let searchData;
+        try {
+            searchData = await searchAndTrim(query);
+        } catch (error) {
+            console.error("[Search Error]", error);
+            return res.status(502).send("Web search failed");
+        }
+
+        const followUpPrompt = PROMPT_TEMPLATE.replace(
+            "{{WEB_SEARCH_RESULTS}}",
+            JSON.stringify(searchData.trimmed),
+        ).replace("{{USER_QUERY}}", query);
+
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("X-Accel-Buffering", "no");
+
+        const { started, cleanAnswer, followUps, costCredits } = await streamResponse(res, {
+            mode: "messages",
+            messages: [...history, { role: "user", content: followUpPrompt }],
+        });
+
+        if (!started) {
+            if (!res.headersSent) {
+                return res.status(503).send("AI service is currently unavailable. Please try again.");
+            } else {
+                res.write("\n[An error occurred while streaming the response.]\n");
+                return res.end();
+            }
+        }
+
+        try {
+            await debitCredits(req.userId!, costCredits);
+        } catch (e) {
+            console.error("[Credits Error] Failed to debit credits:", e);
+        }
+
+        const sourceUrls = searchData.results.map((r) => ({ url: r.url }));
+        writeSources(res, searchData.results);
+        res.write(FOLLOWUPS_OPEN);
+        res.write(JSON.stringify(followUps));
+        res.write(FOLLOWUPS_CLOSE);
+
+        try {
+            await prisma.message.createMany({
+                data: [
+                    { conversationId, content: query, role: "User" },
+                    {
+                        conversationId,
+                        content: cleanAnswer,
+                        role: "Assistant",
+                        sources: sourceUrls,
+                        followUps,
+                    },
+                ],
+            });
+        } catch (e) {
+            console.error("[DB Error] Failed to save follow-up messages:", e);
+        }
+
+        res.end();
+    }),
+);
+
+// ---------- global error handler ----------
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+    console.error("[Unhandled Error]", err);
+    if (res.headersSent) {
+        return res.end();
     }
-    res.write("\n<SOURCES>\n");
-    //  step: 7 -> also stream back the sources and the follow up questions for the user to ask (which we can get from another parallel LLM call)
-    res.write(
-        JSON.stringify(websearchResult.map((result) => ({ url: result.url }))),
-    );
-    res.write("\n</Sources>\n")
-    // step: 8 -> close the event stream
-    res.end();
+    res.status(500).json({ message: "Internal server error" });
 });
-app.post("/brex_ask/follow_up", async(req, res) => {
-    //  step:1 -> get the query from userget the existing chat from db
-    //  step:2 -> forward the full history to the LLM
-    //  step:3 -> TODO: Do context engineering to make sure the LLM understands the context of the conversation
-    //  step:4 -> Stream the response to the user 
-})
-app.listen(3000);
+
+app.listen(PORT, () => console.log(`Listening on :${PORT}`));

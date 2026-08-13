@@ -17,11 +17,13 @@ datasource db {
 // Define schema
 model user {
   id        String   @id @default(uuid())
-  email     String   
+  email     String   @unique
   provider  AuthProvider
   name      String
-  supabase_id String
+  supabase_id String  @unique
   conversations conversation[]
+  credits     Int    @default(100)
+  lastCreditRefillAt DateTime?
 }
 
 model conversation {
@@ -33,11 +35,25 @@ model conversation {
   user     user     @relation(fields: [userId], references: [id])  
 }
 
+// Shared cache for Tavily responses. Results are public web-search data, not
+// user-specific data, so they can safely be reused across users within the TTL.
+model webSearchCache {
+  id              String   @id @default(uuid())
+  normalizedQuery String   @unique
+  originalQuery   String
+  results         Json
+  createdAt       DateTime @default(now())
+
+  @@index([createdAt])
+}
+
 model Message {
   id             Int   @id @default(autoincrement())
   conversationId String
   content        String
   role           MessageRole
+  sources        Json?
+  followUps      Json?
   conversation   conversation @relation(fields: [conversationId], references: [id])
   createdAt      DateTime @default(now())
 }

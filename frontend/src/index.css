@@ -1,0 +1,115 @@
+@import "../styles/globals.css";
+
+@layer base {
+  :root {
+    @apply font-sans;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply min-w-[320px] min-h-screen m-0 bg-background text-foreground overflow-hidden;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: oklch(0.25 0 0) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: oklch(0.25 0 0);
+    border-radius: 3px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: oklch(0.32 0 0);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+@keyframes pulse-dot {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40%            { transform: scale(1);   opacity: 1; }
+}
+
+@keyframes stream-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.35s ease both;
+}
+
+.animate-stream {
+  animation: stream-in 0.15s ease both;
+}
+
+.typing-dot {
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.15s; }
+.typing-dot:nth-child(3) { animation-delay: 0.3s; }
+
+/* prose-like markdown styles */
+.prose-brex h1, .prose-brex h2, .prose-brex h3 {
+  @apply font-semibold text-foreground mt-5 mb-2;
+}
+.prose-brex h1 { @apply text-2xl; }
+.prose-brex h2 { @apply text-xl; }
+.prose-brex h3 { @apply text-lg; }
+.prose-brex p  { @apply mb-3 leading-7 text-foreground/90; }
+.prose-brex ul { @apply list-disc pl-5 mb-3 space-y-1; }
+.prose-brex ol { @apply list-decimal pl-5 mb-3 space-y-1; }
+.prose-brex li { @apply leading-7 text-foreground/90; }
+.prose-brex a  { @apply text-primary underline underline-offset-2; }
+.prose-brex strong { @apply font-semibold text-foreground; }
+.prose-brex em { @apply italic; }
+.prose-brex code {
+  @apply font-mono text-sm bg-muted px-1.5 py-0.5 rounded text-primary;
+}
+.prose-brex pre {
+  @apply bg-muted rounded-lg p-4 overflow-x-auto mb-3;
+}
+.prose-brex pre code {
+  @apply bg-transparent p-0;
+}
+.prose-brex blockquote {
+  @apply border-l-4 border-primary/40 pl-4 italic text-muted-foreground mb-3;
+}
+.citation-badge {
+  @apply inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold
+         rounded-full bg-primary/10 text-primary/60 border border-primary/20
+         align-super relative -top-0.5 mx-0.5 cursor-pointer
+         transition-all duration-150
+         outline-none focus-visible:ring-2 focus-visible:ring-primary/60;
+  /* reset button defaults */
+  padding: 0;
+  line-height: 1;
+  font-family: inherit;
+  opacity: 0.45;
+}
+.citation-badge:hover {
+  @apply bg-primary/30 text-primary border-primary/30;
+  opacity: 1;
+}
