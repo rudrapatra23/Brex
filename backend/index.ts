@@ -60,6 +60,10 @@ app.use(express.json());
 const DAILY_REFILL_CREDITS = Number(process.env.DAILY_REFILL_CREDITS) || 50;
 const REFILL_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
+app.get("/health", (_req, res) => {
+    res.status(200).json({ ok: true, service: "brex-backend", timestamp: new Date().toISOString() });
+});
+
 async function refillDailyCreditsIfEligible(userId: string) {
     const cutoff = new Date(Date.now() - REFILL_INTERVAL_MS);
 
