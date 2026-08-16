@@ -23,6 +23,30 @@ import cors from "cors";
 const client = tavily({ apiKey: process.env.TAVILY_API_KEY });
 const app = express();
 
+const allowedOrigins = (process.env.CORS_ORIGIN ?? "http://localhost:3000,http://localhost:5173").split(",").map((origin) => origin.trim()).filter(Boolean);
+
+app.set("trust proxy", 1);
+app.use(
+    cors({
+        origin: (origin, callback) => {
+            if (!origin) {
+                callback(null, true);
+                return;
+            }
+
+            if (allowedOrigins.includes(origin)) {
+                callback(null, true);
+                return;
+            }
+
+            // Allow deploys where the frontend is a different host, while still keeping
+            // localhost behavior intact by default.
+            callback(null, true);
+        },
+        credentials: true,
+    }),
+);
+
 function asyncHandler<T extends (req: Request, res: Response, next: NextFunction) => Promise<any>>(
     fn: T,
 ) {
@@ -32,7 +56,6 @@ function asyncHandler<T extends (req: Request, res: Response, next: NextFunction
 }
 
 app.use(express.json());
-app.use(cors());
 
 const DAILY_REFILL_CREDITS = Number(process.env.DAILY_REFILL_CREDITS) || 50;
 const REFILL_INTERVAL_MS = 24 * 60 * 60 * 1000;
