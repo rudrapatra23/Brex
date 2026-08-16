@@ -48,11 +48,11 @@ function useMouseWisp() {
   return pos;
 }
 
-const EXAMPLE_QUERIES = [
-  "How does CRISPR gene editing work?",
-  "Latest AI breakthroughs in 2025",
-  "Explain quantum entanglement",
-];
+// const EXAMPLE_QUERIES = [
+//   "How does CRISPR gene editing work?",
+//   "Latest AI breakthroughs in 2025",
+//   "Explain quantum entanglement",
+// ];
 
 const HOW_IT_WORKS = [
   { icon: Search,    label: "Ask anything",              desc: "Type any question, naturally." },
@@ -204,7 +204,7 @@ export default function Landing() {
         </div>
 
         {/* Example chips */}
-        <div className="flex flex-wrap gap-2 justify-center mb-16">
+        {/* <div className="flex flex-wrap gap-2 justify-center mb-16">
           {EXAMPLE_QUERIES.map((q) => (
             <button
               key={q}
@@ -218,7 +218,7 @@ export default function Landing() {
               {q}
             </button>
           ))}
-        </div>
+        </div> */}
 
         {/* How it works */}
         <div className="w-full max-w-2xl mb-16">

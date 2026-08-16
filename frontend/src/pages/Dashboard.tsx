@@ -1,13 +1,24 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { User } from "@supabase/supabase-js";
-import { Plus, ChevronDown, ChevronRight, PanelLeft, LogOut, Zap } from "lucide-react";
+import { Plus, ChevronDown, ChevronRight, PanelLeft, LogOut, Zap, Menu, X } from "lucide-react";
 import { createClient } from "@/lib/client";
 import { BACKEND_URL } from "@/lib/config";
 import SearchBar from "@/components/SearchBar";
 import ChatView, { type Message, type Source } from "@/components/ChatView";
 
 const supabase = createClient();
+
+// ─── Responsive hook ──────────────────────────────────────────────────────────
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
+  return isMobile;
+}
 
 interface ConversationSummary {
   id: string;
@@ -75,21 +86,43 @@ interface SidebarProps {
   onNewChat: () => void;
   onSelectConversation: (id: string) => void;
   onSignOut: () => void;
-  collapsed: boolean;
-  onToggle: () => void;
+  collapsed: boolean;       // desktop: icon-only rail
+  open: boolean;            // mobile: drawer open
+  onToggle: () => void;     // desktop collapse
+  onClose: () => void;      // mobile close
 }
 
-function Sidebar({ user, conversations, activeId, onNewChat, onSelectConversation, onSignOut, collapsed, onToggle }: SidebarProps) {
-  const [open, setOpen] = useState(true);
+function Sidebar({ user, conversations, activeId, onNewChat, onSelectConversation, onSignOut, collapsed, open: mobileOpen, onToggle, onClose }: SidebarProps) {
+  const [historyOpen, setHistoryOpen] = useState(true);
+  const isMobile = useIsMobile();
+
+  const desktopWidth = collapsed ? 48 : 220;
+  const panelWidth  = isMobile ? 260 : desktopWidth;
+  const panelTransform = isMobile
+    ? mobileOpen ? "translateX(0)" : "translateX(-100%)"
+    : "translateX(0)";
 
   return (
-    <aside
-      className={`absolute top-0 left-0 z-30 flex flex-col h-full transition-all duration-200 ease-out flex-shrink-0 ${collapsed ? "w-[48px]" : "w-[220px]"}`}
-      style={{
-        background: "#0D0D0F",
-        borderRight: "1px solid #26262B",
-      }}
-    >
+    <>
+      {/* ── Mobile backdrop ─────────────────────────────────────── */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 md:hidden"
+          onClick={onClose}
+          aria-hidden
+        />
+      )}
+
+      {/* ── Sidebar panel ───────────────────────────────────────── */}
+      <aside
+        className="fixed md:relative top-0 left-0 z-50 md:z-30 flex flex-col h-full flex-shrink-0 transition-all duration-200 ease-out"
+        style={{
+          background: "#0D0D0F",
+          borderRight: "1px solid #26262B",
+          width: panelWidth,
+          transform: panelTransform,
+        }}
+      >
       {/* Header */}
       <div className={`flex items-center ${collapsed ? "justify-center" : "justify-between"} px-3 pt-4 pb-3 flex-shrink-0`}>
         {!collapsed && (
@@ -97,12 +130,21 @@ function Sidebar({ user, conversations, activeId, onNewChat, onSelectConversatio
             <Zap className="w-3.5 h-3.5 text-primary" /> Brex
           </div>
         )}
+        {/* Desktop collapse toggle */}
         <button
           onClick={onToggle}
-          className="p-1.5 rounded-[6px] text-[#5D5D66] hover:text-foreground hover:bg-[#1B1B1F] transition-all duration-150"
+          className="hidden md:flex p-1.5 rounded-[6px] text-[#5D5D66] hover:text-foreground hover:bg-[#1B1B1F] transition-all duration-150"
           aria-label="Toggle sidebar"
         >
           <PanelLeft className="w-3.5 h-3.5" />
+        </button>
+        {/* Mobile close button */}
+        <button
+          onClick={onClose}
+          className="flex md:hidden p-1.5 rounded-[6px] text-[#5D5D66] hover:text-foreground hover:bg-[#1B1B1F] transition-all duration-150"
+          aria-label="Close menu"
+        >
+          <X className="w-4 h-4" />
         </button>
       </div>
 
@@ -127,14 +169,14 @@ function Sidebar({ user, conversations, activeId, onNewChat, onSelectConversatio
       {!collapsed && (
         <div className="flex-1 overflow-hidden flex flex-col px-2 min-h-0">
           <button
-            onClick={() => setOpen((o) => !o)}
+            onClick={() => setHistoryOpen((o) => !o)}
             className="flex items-center justify-between px-2 py-1.5 text-[10px] font-mono uppercase tracking-[0.12em] text-[#5D5D66] hover:text-[#9C9CA3] transition-colors w-full mb-0.5"
           >
             <span>History</span>
-            {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            {historyOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
           </button>
 
-          {open && (
+          {historyOpen && (
             <div className="flex-1 overflow-y-auto space-y-px pb-2">
               {conversations.length === 0 ? (
                 <p className="text-[11px] text-[#5D5D66] px-2 py-3 text-center">No history yet</p>
@@ -184,18 +226,19 @@ function Sidebar({ user, conversations, activeId, onNewChat, onSelectConversatio
         </div>
       )}
     </aside>
+    </>
   );
 }
 
 // ─── Home (empty state) ───────────────────────────────────────────────────────
 
-const SUGGESTIONS = [
-  "What's happening in AI today?",
-  "How does quantum computing work?",
-  "Best practices for React in 2025",
-  "Explain black holes simply",
-  "Latest breakthroughs in medicine",
-];
+// const SUGGESTIONS = [
+//   "What's happening in AI today?",
+//   "How does quantum computing work?",
+//   "Best practices for React in 2025",
+//   "Explain black holes simply",
+//   "Latest breakthroughs in medicine",
+// ];
 
 interface HomeViewProps {
   user: User | null;
@@ -203,9 +246,10 @@ interface HomeViewProps {
   isLoading: boolean;
   showLogin: boolean;
   onShowLogin: () => void;
+  onOpenSidebar: () => void;
 }
 
-function HomeView({ user, onSearch, isLoading, showLogin, onShowLogin }: HomeViewProps) {
+function HomeView({ user, onSearch, isLoading, showLogin, onShowLogin, onOpenSidebar }: HomeViewProps) {
   const firstName = (user?.user_metadata?.full_name as string | undefined)?.split(" ")[0];
 
   async function login(provider: "google" | "github") {
@@ -217,7 +261,7 @@ function HomeView({ user, onSearch, isLoading, showLogin, onShowLogin }: HomeVie
   }
 
   return (
-    <div className="h-full flex flex-col items-center justify-center px-6">
+    <div className="h-full flex flex-col items-center justify-center px-6 pt-14 md:pt-0">
       <div className="w-full max-w-xl animate-fade-up space-y-7">
         <div className="text-center space-y-2">
           <p className="text-xs font-mono uppercase tracking-[0.15em] text-[#5D5D66]">
@@ -274,7 +318,7 @@ function HomeView({ user, onSearch, isLoading, showLogin, onShowLogin }: HomeVie
           </div>
         )}
 
-        {user && (
+        {/* {user && (
           <div className="flex flex-wrap gap-1.5 justify-center">
             {SUGGESTIONS.map((s) => (
               <button
@@ -289,7 +333,7 @@ function HomeView({ user, onSearch, isLoading, showLogin, onShowLogin }: HomeVie
               </button>
             ))}
           </div>
-        )}
+        )} */}
       </div>
     </div>
   );
@@ -307,6 +351,7 @@ export default function Dashboard() {
   const [isLoading, setIsLoading] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(conversationId ?? null);
 
   const justCreatedRef = useRef(false);
@@ -461,6 +506,7 @@ export default function Dashboard() {
 
   function handleSelectConversation(id: string) {
     setMessages([]);
+    setMobileSidebarOpen(false);
     navigate(`/search/${id}`);
   }
 
@@ -478,7 +524,7 @@ export default function Dashboard() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden relative" style={{ background: "#0A0A0B" }}>
-      {/* Subtle glow */}
+      {/* Subtle ambient glow */}
       <div
         aria-hidden
         className="pointer-events-none fixed z-0"
@@ -490,17 +536,69 @@ export default function Dashboard() {
         }}
       />
 
-      <Sidebar
-        user={user}
-        conversations={conversations}
-        activeId={activeConversationId}
-        onNewChat={handleNewChat}
-        onSelectConversation={handleSelectConversation}
-        onSignOut={handleSignOut}
-        collapsed={sidebarCollapsed}
-        onToggle={() => setSidebarCollapsed((c) => !c)}
-      />
+      {/* ── Mobile top bar ──────────────────────────────────────── */}
+      <div
+        className="md:hidden fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 h-12 flex-shrink-0"
+        style={{
+          background: "rgba(10,10,11,0.90)",
+          backdropFilter: "blur(12px)",
+          borderBottom: "1px solid #26262B",
+        }}
+      >
+        <button
+          onClick={() => setMobileSidebarOpen(true)}
+          className="p-1.5 rounded-[6px] text-[#5D5D66] hover:text-foreground transition-colors"
+          aria-label="Open menu"
+        >
+          <Menu className="w-4 h-4" />
+        </button>
+        <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+          <Zap className="w-3.5 h-3.5 text-primary" /> Brex
+        </div>
+        {/* Placeholder to keep logo centered */}
+        <div className="w-7" />
+      </div>
 
+      {/* ── Desktop sidebar (static rail, pushes content) ────────── */}
+      <div
+        className="hidden md:flex flex-col flex-shrink-0 h-full relative z-30 transition-all duration-200"
+        style={{
+          width: sidebarCollapsed ? 48 : 220,
+          background: "#0D0D0F",
+          borderRight: "1px solid #26262B",
+        }}
+      >
+        <Sidebar
+          user={user}
+          conversations={conversations}
+          activeId={activeConversationId}
+          onNewChat={handleNewChat}
+          onSelectConversation={handleSelectConversation}
+          onSignOut={handleSignOut}
+          collapsed={sidebarCollapsed}
+          open={false}
+          onToggle={() => setSidebarCollapsed((c) => !c)}
+          onClose={() => {}}
+        />
+      </div>
+
+      {/* ── Mobile sidebar (slide-over drawer) ───────────────────── */}
+      <div className="md:hidden">
+        <Sidebar
+          user={user}
+          conversations={conversations}
+          activeId={activeConversationId}
+          onNewChat={() => { handleNewChat(); setMobileSidebarOpen(false); }}
+          onSelectConversation={handleSelectConversation}
+          onSignOut={handleSignOut}
+          collapsed={false}
+          open={mobileSidebarOpen}
+          onToggle={() => {}}
+          onClose={() => setMobileSidebarOpen(false)}
+        />
+      </div>
+
+      {/* ── Main content ─────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col min-w-0 relative z-10 overflow-hidden h-full text-foreground">
         {isConversationView ? (
           <ChatView
@@ -515,6 +613,7 @@ export default function Dashboard() {
             isLoading={isLoading}
             showLogin={showLogin}
             onShowLogin={() => setShowLogin(true)}
+            onOpenSidebar={() => setMobileSidebarOpen(true)}
           />
         )}
       </main>

@@ -108,14 +108,14 @@ export default function Auth() {
           </div>
 
           {/* Divider */}
-          <div className="flex items-center gap-3 my-5">
+          {/* <div className="flex items-center gap-3 my-5">
             <div className="flex-1 h-px bg-[#26262B]" />
             <span className="text-[11px] text-[#5D5D66] font-mono">or</span>
             <div className="flex-1 h-px bg-[#26262B]" />
-          </div>
+          </div> */}
 
           {/* Primary CTA (re-triggers OAuth flow) */}
-          <button
+          {/* <button
             onClick={() => login("google")}
             className="w-full py-2.5 rounded-[10px] text-sm font-medium text-[#0A0A0B] transition-all duration-150 hover:opacity-90 active:scale-[0.98]"
             style={{
@@ -124,7 +124,7 @@ export default function Auth() {
             }}
           >
             Sign in with Google
-          </button>
+          </button> */}
 
           {/* Footer note */}
           <div className="flex items-center justify-center gap-1.5 mt-5 text-[11px] text-[#5D5D66]">

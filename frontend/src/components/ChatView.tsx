@@ -177,7 +177,7 @@ export default function ChatView({ messages, isLoading, onFollowUp }: ChatViewPr
     <div className="flex flex-col h-full overflow-hidden" style={{ background: "#0A0A0B" }}>
       {/* Scrollable conversation stream */}
       <div className="flex-1 overflow-y-auto min-h-0 scroll-smooth">
-        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 space-y-12">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 space-y-12 pt-20 md:pt-8">
           {pairs.map((pair, pairIndex) => {
             const isLastPair = pairIndex === pairs.length - 1;
 
@@ -217,7 +217,13 @@ export default function ChatView({ messages, isLoading, onFollowUp }: ChatViewPr
       </div>
 
       {/* Sticky bottom input */}
-      <div className="flex-shrink-0 px-4 sm:px-6 pb-4 pt-2" style={{ background: "linear-gradient(to top, #0A0A0B 60%, transparent)" }}>
+      <div
+        className="flex-shrink-0 px-4 sm:px-6 pb-4 pt-2"
+        style={{
+          background: "linear-gradient(to top, #0A0A0B 60%, transparent)",
+          paddingBottom: "max(16px, env(safe-area-inset-bottom))",
+        }}
+      >
         <div className="max-w-3xl mx-auto">
           <SearchBar
             onSubmit={onFollowUp}
