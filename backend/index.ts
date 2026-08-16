@@ -579,4 +579,4 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     res.status(500).json({ message: "Internal server error" });
 });
 
-app.listen(PORT, () => console.log(`Listening on :${PORT}`));
+app.listen(PORT, "0.0.0.0", () => console.log(`Listening on :${PORT}`));
