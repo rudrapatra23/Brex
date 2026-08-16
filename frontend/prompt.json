@@ -1,0 +1,181 @@
+{
+  "project": "Perplexity Clone - Frontend Build Spec",
+  "description": "A futuristic, minimal AI search engine. User asks a question, backend uses Tavily to scrape/search the web, then feeds that context into an LLM agent which streams back a synthesized answer with citations.",
+
+  "design_philosophy": {
+    "vibe": "Futuristic but restrained. Think 'command center', not 'sci-fi movie'. Minimal chrome, generous whitespace, one accent color doing all the work.",
+    "principles": [
+      "Dark-first design. Light mode optional, not required.",
+      "Motion should feel like physics, not decoration. Micro-interactions only: fades, subtle scale, smooth height changes.",
+      "No more than 1-2 animated elements visible on screen at once.",
+      "Typography carries the futuristic feel more than effects do.",
+      "Every screen should feel calm and fast, never busy or loud."
+    ]
+  },
+
+  "theme": {
+    "mode": "dark-first",
+    "colors": {
+      "background": "#0A0A0B",
+      "surface": "#131316",
+      "surface_elevated": "#1B1B1F",
+      "border": "#26262B",
+      "text_primary": "#F5F5F7",
+      "text_secondary": "#9C9CA3",
+      "text_muted": "#5D5D66",
+      "accent": "#5EEAD4",
+      "accent_secondary": "#7C9CFF",
+      "accent_gradient": "linear-gradient(135deg, #5EEAD4 0%, #7C9CFF 100%)",
+      "success": "#4ADE80",
+      "warning": "#FBBF24",
+      "error": "#F87171"
+    },
+    "typography": {
+      "font_primary": "Geist Sans, Inter, system-ui, sans-serif",
+      "font_mono": "Geist Mono, JetBrains Mono, monospace",
+      "notes": "Use font_mono for citation numbers, source URLs, code, and metadata to reinforce the 'technical/futuristic' feel. Use font_primary for everything else. Keep font weights limited to 400/500/600/700."
+    },
+    "radius": {
+      "sm": "6px",
+      "md": "10px",
+      "lg": "16px",
+      "pill": "999px"
+    },
+    "shadows": {
+      "note": "Avoid heavy drop shadows. Use soft, low-opacity glows in the accent color instead, e.g. 0 0 24px rgba(94,234,212,0.15), to suggest energy/futurism without looking dated."
+    },
+    "spacing_scale": "4px base unit (4, 8, 12, 16, 24, 32, 48, 64, 96)"
+  },
+
+  "animation_guidelines": {
+    "philosophy": "Animations should be felt, not seen. Keep durations short (120-250ms) and easing natural.",
+    "easing": "cubic-bezier(0.16, 1, 0.3, 1)",
+    "allowed_animations": [
+      "Fade + 4px slide-up on content mount (150-200ms)",
+      "Subtle scale (0.98 -> 1) on button/card hover",
+      "Smooth height auto-animate when answer streams in or accordion expands",
+      "Accent-colored glow pulse ONLY on the active search/loading state, nothing else",
+      "Skeleton shimmer while sources load, replaced instantly once real content arrives",
+      "Streaming text reveal (word-by-word or char-by-char) for the AI answer, like a typewriter but smooth, not blinking"
+    ],
+    "avoid": [
+      "Parallax scrolling",
+      "3D tilts/rotations on cards",
+      "Bouncy/elastic easing",
+      "Auto-playing background particle effects or animated gradients that never stop",
+      "Page transition animations longer than 300ms"
+    ]
+  },
+
+  "pages": [
+    {
+      "name": "Landing Page",
+      "route": "/",
+      "goal": "Communicate 'fast, intelligent, trustworthy search' in one screen. Convert visitor to sign up.",
+      "layout": "Single column, centered, generous vertical rhythm. No traditional multi-section marketing scroll — keep it to hero + how-it-works + CTA, max 3 sections.",
+      "sections": [
+        {
+          "name": "Nav bar",
+          "details": "Fixed top, transparent over background, becomes semi-opaque surface color with blur (backdrop-filter: blur(12px)) on scroll. Logo left, 'Sign in' + 'Get started' (accent gradient button) right."
+        },
+        {
+          "name": "Hero",
+          "details": "Large centered headline (e.g. 'Search, reasoned.'), one-line subheadline in text_secondary, and a functional-looking search input box front and center (even if it just redirects to /auth or /dashboard on submit). Search box has a soft accent glow border on focus. Below it, 2-3 example query chips (pill-shaped, subtle border, hover lifts slightly)."
+        },
+        {
+          "name": "How it works",
+          "details": "3-step horizontal row (stacks vertically on mobile): 1) Ask anything  2) We search the live web (Tavily)  3) Agent reasons over sources and answers with citations. Each step is a minimal icon (line-style, monochrome, accent on hover) + short label, no big illustrations."
+        },
+        {
+          "name": "Final CTA",
+          "details": "Short, one headline + one button. Nothing else. Footer below is minimal: logo, 2-3 links, copyright, all in text_muted."
+        }
+      ],
+      "background_treatment": "Solid background color with one very subtle radial accent-colored glow behind the hero search box (low opacity, static, not animated) to add depth without noise."
+    },
+    {
+      "name": "Auth Page",
+      "route": "/auth  (or /auth/sign-in and /auth/sign-up as tabs/toggle)",
+      "goal": "Fast, frictionless sign in/up. Feels like entering the product, not filling a form.",
+      "layout": "Centered single card (max-width ~400px) on the same dark background as landing, no split-screen imagery — keep it minimal.",
+      "elements": [
+        "Small logo/wordmark above the card",
+        "Card (surface_elevated background, border, rounded-lg) containing: heading ('Welcome back' / 'Create your account'), toggle or tabs between Sign in / Sign up, email input, password input, primary button (accent gradient, full width)",
+        "Divider with 'or' then OAuth buttons (Google/GitHub) styled as outline buttons with icon, monochrome icons that don't fight the theme",
+        "Small text link below card to switch between sign in/up",
+        "Inline validation states use error/success colors defined in theme, animate in with fade only, no shake effects"
+      ],
+      "animation": "Card fades + slides up 8px on mount. Toggling between sign in/sign up cross-fades the form fields (150ms), does not resize jarringly — use smooth height animation."
+    },
+    {
+      "name": "Dashboard (Main App / Chat-Search Interface)",
+      "route": "/dashboard",
+      "goal": "This is the core product screen — where the user asks questions and sees AI-synthesized, cited answers streamed from Tavily search + agent reasoning.",
+      "layout": "Two-zone layout: a slim collapsible sidebar (left) for chat/search history, and a main content column (center, max-width ~760px, centered) for the active conversation. No right sidebar to keep it minimal.",
+      "sections": [
+        {
+          "name": "Sidebar",
+          "details": "Collapsible (icon-only collapsed state). Contains: 'New search' button at top (accent outline), list of past search threads grouped by date (Today / Yesterday / Previous 7 days), each item truncates with ellipsis, hover shows subtle surface_elevated background. User avatar/settings pinned at bottom."
+        },
+        {
+          "name": "Main content — empty state",
+          "details": "Centered large search input (same visual language as landing hero box), a short greeting above it ('What do you want to know?'), and a row of suggested prompt chips below."
+        },
+        {
+          "name": "Main content — active thread",
+          "details": "User's query shown as a right-aligned or bold minimal heading. Below it, an 'Searching the web...' status row with animated accent dots or a subtle shimmer while Tavily results are being fetched. Once sources are found, show a horizontally scrollable row of compact source cards (favicon, domain in font_mono text_muted, title truncated) BEFORE the answer text — this is the signature Perplexity-style moment. Then the AI answer streams in below as clean markdown-rendered text with inline numbered citation badges (small, pill-shaped, accent-colored, e.g. [1] [2]) that link/scroll to the source cards. Follow-up input pinned at the bottom of the viewport (sticky), same style as main search box but slightly smaller."
+        },
+        {
+          "name": "Source card component",
+          "details": "Small rectangular card, surface_elevated background, border radius md, ~200px wide. Shows favicon (16px), domain name in font_mono uppercase small caps text_muted, and article title in text_primary truncated to 2 lines. Hover: border becomes accent, slight lift (translateY -2px), 150ms."
+        },
+        {
+          "name": "Citation badge component",
+          "details": "Inline, small (~18px), pill or circle, accent-colored background at low opacity with accent text, font_mono numerals. Clicking scrolls/highlights the matching source card with a brief glow pulse."
+        },
+        {
+          "name": "Streaming/loading states",
+          "details": "Three distinct states to visually differentiate: 1) 'Searching the web' (pulsing accent dot + text), 2) 'Reading sources' (skeleton source cards shimmering), 3) 'Answering' (streaming text with a thin blinking accent cursor at the end of the last rendered word, cursor is a simple vertical bar, not an emoji)."
+        }
+      ],
+      "animation": "New thread content fades+slides in. Source cards stagger in with a 40ms delay between each (max 6 visible, rest scrollable). Answer text streams progressively rather than appearing all at once. Sidebar collapse/expand animates width smoothly (200ms), not instantly."
+    }
+  ],
+
+  "component_library_notes": {
+    "buttons": {
+      "primary": "Accent gradient background, dark text or white text depending on contrast, radius md, subtle glow shadow on hover, scale 0.98 on active press.",
+      "secondary": "Transparent background, 1px border in 'border' color, text_primary text, border becomes accent on hover.",
+      "ghost": "No border, no background, text_secondary, background becomes surface_elevated on hover."
+    },
+    "inputs": {
+      "default": "surface background, 1px border, radius md, placeholder in text_muted, border becomes accent + soft glow on focus (no harsh outline ring)."
+    },
+    "search_box_hero": "Larger than standard inputs (~56-64px tall), radius lg, icon-left (search icon, line style), optional submit arrow button on the right that appears once text is entered (fades+scales in)."
+  },
+
+  "backend_integration_context_for_agent": {
+    "note": "This section is context only, not a frontend build instruction — include so the coding agent understands the data shape it's rendering.",
+    "flow": [
+      "User submits query from search box (landing/dashboard).",
+      "Backend calls Tavily API to search/scrape the live web for the query.",
+      "Tavily results (title, url, snippet, raw content) are passed as context into an LLM agent.",
+      "Agent reasons over the context and streams back a synthesized answer with inline citation markers referencing which source each claim came from.",
+      "Frontend should treat the response as: sources[] (array of {title, url, favicon, domain}) that arrives first, then an answer stream (text chunks) that arrives after, with citation indices mapping back to the sources array."
+    ],
+    "frontend_expectation": "Design components to handle three async states per query (searching -> sources_loaded -> answer_streaming -> done), and be resilient to sources arriving before the answer starts streaming."
+  },
+
+  "responsive_behavior": {
+    "mobile": "Sidebar becomes a slide-over drawer triggered by a hamburger icon. Source cards row becomes a horizontally swipeable carousel. Hero/search boxes shrink padding but keep same visual style. Bottom sticky input respects safe-area-inset for mobile browsers."
+  },
+
+  "explicit_instructions_to_agent": [
+    "Build exactly 3 pages: Landing ('/'), Auth ('/auth'), Dashboard ('/dashboard').",
+    "Use the color tokens and font tokens above consistently across all pages via a shared theme/config file (e.g. Tailwind config or CSS variables) — do not hardcode colors per component.",
+    "Keep animations subtle and purposeful per the animation_guidelines section — if in doubt, use less motion, not more.",
+    "Prioritize the dashboard's source-cards-then-streaming-answer pattern — this is the core differentiating UX of the product and should feel polished.",
+    "Do not add features not described here (no right sidebar, no multi-step onboarding, no theme switcher unless asked).",
+    "Keep all copy short and confident, matching a minimal/technical tone — avoid marketing fluff."
+  ]
+}

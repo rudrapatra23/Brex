@@ -15,7 +15,7 @@ import { tavily } from "@tavily/core";
 import { PROMPT_TEMPLATE, SYSTEM_PROMPT } from "./prompt";
 import { z } from "zod";
 import { streamText } from "ai";
-import { google } from "@ai-sdk/google";
+import { groq } from "@ai-sdk/groq";
 import { prisma } from "./db";
 import { middleware } from "./middleware";
 import cors from "cors";
@@ -57,12 +57,12 @@ async function refillDailyCreditsIfEligible(userId: string) {
 }
 
 const PORT = Number(process.env.PORT) || 3001;
-const MODEL_TIMEOUT_MS = Number(process.env.MODEL_TIMEOUT_MS) || 15_000;
+const MODEL_TIMEOUT_MS = Number(process.env.MODEL_TIMEOUT_MS) || 30_000;
 
-// Pricing config for the active model
+// Pricing config — Groq llama-3.3-70b-versatile
 const MODEL_CONFIG = {
-    inputCostPer1M: 0.1,
-    outputCostPer1M: 0.4,
+    inputCostPer1M: 0.59,
+    outputCostPer1M: 0.79,
 };
 
 const ANSWER_OPEN = "<ANSWER>";
@@ -172,8 +172,14 @@ async function pumpStreamToClient(
     }
 
     if (buffer.length > 0 && !answerClosed) {
-        res.write(buffer);
-        cleanAnswer += buffer;
+        // The stream ended without a closing </ANSWER> tag.
+        // Strip it if it somehow ended up in the buffer, then flush.
+        const strayClose = buffer.indexOf(ANSWER_CLOSE);
+        const toWrite = strayClose !== -1 ? buffer.slice(0, strayClose) : buffer;
+        if (toWrite.length > 0) {
+            res.write(toWrite);
+            cleanAnswer += toWrite;
+        }
     }
 
     const followUps = Array.from(tail.matchAll(/<question>([\s\S]*?)<\/question>/g)).map((m) =>
@@ -193,7 +199,7 @@ async function streamResponse(
 ): Promise<{ started: boolean; cleanAnswer: string; followUps: string[]; costCredits: number }> {
     try {
         const candidateStream = streamText({
-            model: google("gemini-3.5-flash"),
+            model: groq("llama-3.3-70b-versatile"),
             system: SYSTEM_PROMPT,
             ...(input.mode === "prompt"
                 ? { prompt: input.prompt }
@@ -494,6 +500,50 @@ app.post(
         }
 
         res.end();
+    }),
+);
+
+// ---------- delete conversation ----------
+
+const deleteConversationSchema = z.object({
+    conversationId: z.string().trim().min(1).max(128),
+});
+
+app.delete(
+    "/conversation/:conversationId",
+    middleware,
+    asyncHandler(async (req, res) => {
+        // 1. Validate param
+        const parsed = deleteConversationSchema.safeParse({
+            conversationId: req.params.conversationId,
+        });
+        if (!parsed.success) {
+            return res.status(400).json({ message: "Invalid conversationId" });
+        }
+        const { conversationId } = parsed.data;
+
+        // 2. Ownership check — NEVER skip this.
+        //    We look up the conversation filtered by BOTH id AND the authenticated userId.
+        //    If the conversation belongs to someone else, findFirst returns null → 404.
+        //    This prevents IDOR: an attacker cannot delete another user's conversation
+        //    even if they know its ID.
+        const conversation = await prisma.conversation.findFirst({
+            where: { id: conversationId, userId: req.userId! },
+            select: { id: true },
+        });
+
+        if (!conversation) {
+            // Return 404 (not 403) so we don't reveal whether the resource exists
+            return res.status(404).json({ message: "Conversation not found" });
+        }
+
+        // 3. Delete messages first, then the conversation (atomic transaction)
+        await prisma.$transaction([
+            prisma.message.deleteMany({ where: { conversationId } }),
+            prisma.conversation.delete({ where: { id: conversationId } }),
+        ]);
+
+        return res.status(200).json({ message: "Deleted" });
     }),
 );
 

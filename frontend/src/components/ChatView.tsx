@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { renderMarkdown } from "@/lib/markdown";
 import SourceCard from "./SourceCard";
 import SearchBar from "./SearchBar";
-import { ArrowRight, Globe, Sparkles } from "lucide-react";
+import { ArrowRight, Globe } from "lucide-react";
 
 export interface Source {
   url: string;
@@ -25,9 +25,9 @@ interface ChatViewProps {
 function TypingIndicator() {
   return (
     <div className="flex items-center gap-1.5 py-2">
-      <div className="w-2 h-2 rounded-full bg-primary animate-bounce [animation-delay:-0.3s]" />
-      <div className="w-2 h-2 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]" />
-      <div className="w-2 h-2 rounded-full bg-primary animate-bounce" />
+      <div className="w-1.5 h-1.5 rounded-full typing-dot" style={{ background: "#5EEAD4" }} />
+      <div className="w-1.5 h-1.5 rounded-full typing-dot" style={{ background: "#5EEAD4" }} />
+      <div className="w-1.5 h-1.5 rounded-full typing-dot" style={{ background: "#5EEAD4" }} />
     </div>
   );
 }
@@ -107,8 +107,8 @@ function AssistantMessage({
 
       {/* Answer */}
       <div className="relative">
-        <div className="flex items-center gap-2 text-xs font-semibold tracking-wider text-muted-foreground uppercase mb-3">
-          <Sparkles className="w-3.5 h-3.5 text-primary" />
+        <div className="flex items-center gap-2 text-xs font-semibold tracking-wider uppercase mb-3" style={{ color: "#5D5D66" }}>
+          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: "#5EEAD4" }} />
           <span>Answer</span>
         </div>
         <div className="prose-brex text-foreground/90 leading-relaxed">
@@ -118,33 +118,28 @@ function AssistantMessage({
               })
             : null}
           {streaming && !content && <TypingIndicator />}
-          {streaming && content && (
-            <span className="inline-block w-1.5 h-4 bg-primary rounded-full ml-1 animate-pulse align-middle" />
-          )}
+          {streaming && content && <span className="stream-cursor" />}
         </div>
       </div>
 
       {/* Follow-up suggestions */}
       {hasFollowUps && (
-        <div className="animate-in fade-in slide-in-from-bottom-2 duration-300 pt-2 space-y-2.5">
-          <div className="text-xs font-semibold tracking-wider text-muted-foreground/80 uppercase">
+        <div className="animate-fade-in pt-2 space-y-2.5">
+          <div className="text-[10px] font-mono uppercase tracking-[0.12em]" style={{ color: "#5D5D66" }}>
             Related Questions
           </div>
-          <div className="grid gap-2">
+          <div className="grid gap-1.5">
             {followUps!.map((q, i) => (
               <button
                 key={i}
                 onClick={() => onFollowUp(q)}
-                className="
-                  group w-full flex items-center justify-between gap-3
-                  px-4 py-3 rounded-xl text-left text-sm font-medium
-                  bg-secondary/40 hover:bg-secondary/80 border border-border/50
-                  hover:border-primary/30 text-foreground/80 hover:text-foreground
-                  transition-all duration-200 backdrop-blur-sm active:scale-[0.99]
-                "
+                className="group w-full flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-[8px] text-left text-sm transition-all duration-150 active:scale-[0.99]"
+                style={{ background: "#131316", border: "1px solid #26262B", color: "#9C9CA3" }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(94,234,212,0.25)"; (e.currentTarget as HTMLElement).style.color = "#F5F5F7"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "#26262B"; (e.currentTarget as HTMLElement).style.color = "#9C9CA3"; }}
               >
-                <span className="line-clamp-2">{q}</span>
-                <ArrowRight className="w-4 h-4 flex-shrink-0 text-muted-foreground group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
+                <span className="line-clamp-2 text-[13px]">{q}</span>
+                <ArrowRight className="w-3.5 h-3.5 flex-shrink-0 group-hover:translate-x-0.5 transition-transform" style={{ color: "#5EEAD4" }} />
               </button>
             ))}
           </div>
@@ -179,10 +174,10 @@ export default function ChatView({ messages, isLoading, onFollowUp }: ChatViewPr
   }, [pairs.length]);
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-background">
+    <div className="flex flex-col h-full overflow-hidden" style={{ background: "#0A0A0B" }}>
       {/* Scrollable conversation stream */}
       <div className="flex-1 overflow-y-auto min-h-0 scroll-smooth">
-        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 space-y-12">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 space-y-12 pt-20 md:pt-8">
           {pairs.map((pair, pairIndex) => {
             const isLastPair = pairIndex === pairs.length - 1;
 
@@ -190,7 +185,8 @@ export default function ChatView({ messages, isLoading, onFollowUp }: ChatViewPr
               <div
                 key={pairIndex}
                 ref={isLastPair ? lastPairRef : undefined}
-                className="space-y-6 pt-4 border-t border-border/40 first:border-0 first:pt-0"
+                className="space-y-6 pt-6 first:pt-0"
+            style={{ borderTop: "1px solid rgba(38,38,43,0.6)", marginTop: pairIndex === 0 ? 0 : undefined }}
               >
                 <UserMessage content={pair.user.content} />
                 {pair.assistant ? (
@@ -205,10 +201,10 @@ export default function ChatView({ messages, isLoading, onFollowUp }: ChatViewPr
                 ) : (
                   isLoading &&
                   isLastPair && (
-                    <div className="animate-in fade-in duration-300 space-y-3">
-                      <div className="flex items-center gap-2 text-xs font-medium text-primary">
+                    <div className="animate-fade-in space-y-3">
+                      <div className="flex items-center gap-2 text-xs font-medium" style={{ color: "#5EEAD4" }}>
                         <Globe className="w-3.5 h-3.5 animate-spin" />
-                        <span>Searching the web...</span>
+                        <span>Searching the web…</span>
                       </div>
                       <TypingIndicator />
                     </div>
@@ -220,8 +216,14 @@ export default function ChatView({ messages, isLoading, onFollowUp }: ChatViewPr
         </div>
       </div>
 
-      {/* Floating Bottom Input Bar */}
-      <div className="flex-shrink-0 px-4 sm:px-6 pb-6 pt-3 bg-gradient-to-t from-background via-background/90 to-transparent">
+      {/* Sticky bottom input */}
+      <div
+        className="flex-shrink-0 px-4 sm:px-6 pb-4 pt-2"
+        style={{
+          background: "linear-gradient(to top, #0A0A0B 60%, transparent)",
+          paddingBottom: "max(16px, env(safe-area-inset-bottom))",
+        }}
+      >
         <div className="max-w-3xl mx-auto">
           <SearchBar
             onSubmit={onFollowUp}
