@@ -497,6 +497,50 @@ app.post(
     }),
 );
 
+// ---------- delete conversation ----------
+
+const deleteConversationSchema = z.object({
+    conversationId: z.string().trim().min(1).max(128),
+});
+
+app.delete(
+    "/conversation/:conversationId",
+    middleware,
+    asyncHandler(async (req, res) => {
+        // 1. Validate param
+        const parsed = deleteConversationSchema.safeParse({
+            conversationId: req.params.conversationId,
+        });
+        if (!parsed.success) {
+            return res.status(400).json({ message: "Invalid conversationId" });
+        }
+        const { conversationId } = parsed.data;
+
+        // 2. Ownership check — NEVER skip this.
+        //    We look up the conversation filtered by BOTH id AND the authenticated userId.
+        //    If the conversation belongs to someone else, findFirst returns null → 404.
+        //    This prevents IDOR: an attacker cannot delete another user's conversation
+        //    even if they know its ID.
+        const conversation = await prisma.conversation.findFirst({
+            where: { id: conversationId, userId: req.userId! },
+            select: { id: true },
+        });
+
+        if (!conversation) {
+            // Return 404 (not 403) so we don't reveal whether the resource exists
+            return res.status(404).json({ message: "Conversation not found" });
+        }
+
+        // 3. Delete messages first, then the conversation (atomic transaction)
+        await prisma.$transaction([
+            prisma.message.deleteMany({ where: { conversationId } }),
+            prisma.conversation.delete({ where: { id: conversationId } }),
+        ]);
+
+        return res.status(200).json({ message: "Deleted" });
+    }),
+);
+
 // ---------- global error handler ----------
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     console.error("[Unhandled Error]", err);

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { User } from "@supabase/supabase-js";
-import { Plus, ChevronDown, ChevronRight, PanelLeft, LogOut, Zap, Menu, X } from "lucide-react";
+import { Plus, ChevronDown, ChevronRight, PanelLeft, LogOut, Zap, Menu, X, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/client";
 import { BACKEND_URL } from "@/lib/config";
 import SearchBar from "@/components/SearchBar";
@@ -77,6 +77,48 @@ function getInitials(user: User): string {
   return (user.email?.[0] ?? "U").toUpperCase();
 }
 
+/** Extract profile picture URL from Supabase OAuth user_metadata.
+ *  Google sets avatar_url; GitHub sets avatar_url too (their CDN).
+ *  Falls back to null so the initials badge is shown instead.
+ */
+function getAvatarUrl(user: User): string | null {
+  const meta = user.user_metadata as Record<string, unknown> | undefined;
+  const url = meta?.avatar_url ?? meta?.picture ?? null;
+  return typeof url === "string" && url.length > 0 ? url : null;
+}
+
+// ─── Avatar badge ─────────────────────────────────────────────────────────────
+
+function AvatarBadge({ user, size = 24 }: { user: User; size?: number }) {
+  const [imgError, setImgError] = useState(false);
+  const avatarUrl = getAvatarUrl(user);
+  const showImg = avatarUrl && !imgError;
+
+  return showImg ? (
+    <img
+      src={avatarUrl}
+      alt={getInitials(user)}
+      width={size}
+      height={size}
+      onError={() => setImgError(true)}
+      className="rounded-full flex-shrink-0 object-cover"
+      style={{ width: size, height: size, border: "1px solid rgba(94,234,212,0.2)" }}
+    />
+  ) : (
+    <div
+      className="rounded-full flex items-center justify-center font-bold text-primary flex-shrink-0"
+      style={{
+        width: size, height: size,
+        fontSize: size * 0.42,
+        background: "rgba(94,234,212,0.1)",
+        border: "1px solid rgba(94,234,212,0.2)",
+      }}
+    >
+      {getInitials(user)}
+    </div>
+  );
+}
+
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
 interface SidebarProps {
@@ -85,14 +127,15 @@ interface SidebarProps {
   activeId: string | null;
   onNewChat: () => void;
   onSelectConversation: (id: string) => void;
+  onDeleteConversation: (id: string) => void;
   onSignOut: () => void;
-  collapsed: boolean;       // desktop: icon-only rail
-  open: boolean;            // mobile: drawer open
-  onToggle: () => void;     // desktop collapse
-  onClose: () => void;      // mobile close
+  collapsed: boolean;
+  open: boolean;
+  onToggle: () => void;
+  onClose: () => void;
 }
 
-function Sidebar({ user, conversations, activeId, onNewChat, onSelectConversation, onSignOut, collapsed, open: mobileOpen, onToggle, onClose }: SidebarProps) {
+function Sidebar({ user, conversations, activeId, onNewChat, onSelectConversation, onDeleteConversation, onSignOut, collapsed, open: mobileOpen, onToggle, onClose }: SidebarProps) {
   const [historyOpen, setHistoryOpen] = useState(true);
   const isMobile = useIsMobile();
 
@@ -182,18 +225,31 @@ function Sidebar({ user, conversations, activeId, onNewChat, onSelectConversatio
                 <p className="text-[11px] text-[#5D5D66] px-2 py-3 text-center">No history yet</p>
               ) : (
                 conversations.map((conv) => (
-                  <button
+                  <div
                     key={conv.id}
-                    onClick={() => onSelectConversation(conv.id)}
-                    title={conv.title}
-                    className={`w-full text-left px-2.5 py-1.5 rounded-[6px] text-[11px] truncate transition-all duration-150 ${
-                      activeId === conv.id
-                        ? "text-primary bg-[rgba(94,234,212,0.08)]"
-                        : "text-[#9C9CA3] hover:text-foreground hover:bg-[#1B1B1F]"
-                    }`}
+                    className="group relative flex items-center rounded-[6px] transition-all duration-150"
                   >
-                    {conv.title}
-                  </button>
+                    <button
+                      onClick={() => onSelectConversation(conv.id)}
+                      title={conv.title}
+                      className={`flex-1 text-left px-2.5 py-1.5 rounded-[6px] text-[11px] truncate transition-all duration-150 pr-7 ${
+                        activeId === conv.id
+                          ? "text-primary bg-[rgba(94,234,212,0.08)]"
+                          : "text-[#9C9CA3] hover:text-foreground hover:bg-[#1B1B1F]"
+                      }`}
+                    >
+                      {conv.title}
+                    </button>
+                    {/* Delete button — appears on row hover */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onDeleteConversation(conv.id); }}
+                      title="Delete conversation"
+                      className="absolute right-1 opacity-0 group-hover:opacity-100 p-1 rounded-[4px] text-[#5D5D66] hover:text-[#F87171] hover:bg-[rgba(248,113,113,0.08)] transition-all duration-150"
+                      aria-label="Delete conversation"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
                 ))
               )}
             </div>
@@ -205,16 +261,13 @@ function Sidebar({ user, conversations, activeId, onNewChat, onSelectConversatio
       {!collapsed && user && (
         <div className="p-2 mt-auto" style={{ borderTop: "1px solid #26262B" }}>
           <div className="flex items-center gap-2 px-2 py-1.5 mb-1">
-            <div
-              className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-primary flex-shrink-0"
-              style={{ background: "rgba(94,234,212,0.1)", border: "1px solid rgba(94,234,212,0.2)" }}
-            >
-              {getInitials(user)}
-            </div>
+            {/* Avatar: OAuth profile picture with initials fallback */}
+            <AvatarBadge user={user} size={24} />
             <div className="flex-1 min-w-0">
               <p className="text-[11px] font-medium text-foreground truncate">
                 {(user.user_metadata?.full_name as string) ?? user.email}
               </p>
+              <p className="text-[10px] text-[#5D5D66] truncate">{user.email}</p>
             </div>
           </div>
           <button
@@ -498,6 +551,40 @@ export default function Dashboard() {
     }
   }
 
+  async function deleteConversation(conversationId: string) {
+    // Optimistic removal — remove from UI immediately
+    setConversations((prev) => prev.filter((c) => c.id !== conversationId));
+
+    // If the deleted conversation is currently open, go back to empty home
+    if (activeConversationId === conversationId) {
+      setMessages([]);
+      setActiveConversationId(null);
+      navigate("/app");
+    }
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const jwt = session?.access_token;
+      if (!jwt) return;
+
+      const res = await fetch(`${BACKEND_URL}/conversation/${conversationId}`, {
+        method: "DELETE",
+        headers: { Authorization: jwt },
+      });
+
+      if (!res.ok) {
+        // Rollback optimistic removal if server rejected
+        console.error("[Delete] Server returned", res.status);
+        await loadConversations(); // refresh to restore correct state
+      } else {
+        messagesCacheRef.current.delete(conversationId);
+      }
+    } catch (err) {
+      console.error("[Delete] Network error", err);
+      await loadConversations(); // restore state on failure
+    }
+  }
+
   function handleNewChat() {
     setMessages([]);
     setActiveConversationId(null);
@@ -574,6 +661,7 @@ export default function Dashboard() {
           activeId={activeConversationId}
           onNewChat={handleNewChat}
           onSelectConversation={handleSelectConversation}
+          onDeleteConversation={deleteConversation}
           onSignOut={handleSignOut}
           collapsed={sidebarCollapsed}
           open={false}
@@ -590,6 +678,7 @@ export default function Dashboard() {
           activeId={activeConversationId}
           onNewChat={() => { handleNewChat(); setMobileSidebarOpen(false); }}
           onSelectConversation={handleSelectConversation}
+          onDeleteConversation={deleteConversation}
           onSignOut={handleSignOut}
           collapsed={false}
           open={mobileSidebarOpen}
