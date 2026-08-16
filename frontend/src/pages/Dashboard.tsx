@@ -59,8 +59,19 @@ function parseStreamChunk(raw: string): {
 
   const conversationId = raw.match(/<CONVERSATION_ID>([^<]*)<\/CONVERSATION_ID>/i)?.[1]?.trim() || null;
 
-  return { answer: answerBlock.trimEnd(), sources, conversationId, followUps };
+  // Safety net: strip any XML control tags the model leaked into the answer text.
+  // The backend strips these server-side but timing/chunking can cause leaks.
+  const cleaned = answerBlock
+    .replace(/<\/ANSWER>/gi, "")
+    .replace(/<ANSWER>/gi, "")
+    .replace(/<\/?SOURCES>/gi, "")
+    .replace(/<\/?FOLLOW_UPS>/gi, "")
+    .replace(/<\/?CONVERSATION_ID>/gi, "")
+    .trimEnd();
+
+  return { answer: cleaned, sources, conversationId, followUps };
 }
+
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
