@@ -2,7 +2,7 @@
 export const BACKEND_URL = (() => {
   // In development/build-time, check process.env
   try {
-    const url = process?.env?.BUN_PUBLIC_BACKEND_URL;
+    const url = process.env.BUN_PUBLIC_BACKEND_URL;
     if (url) return url;
   } catch {}
 
