@@ -1,9 +1,15 @@
 
-const envBackendUrl =
-  (typeof process !== "undefined" &&
-    (process.env.BUN_PUBLIC_BACKEND_URL ||
-      process.env.VITE_BACKEND_URL ||
-      process.env.BACKEND_URL)) ||
-  (typeof window !== "undefined" ? `${window.location.origin}` : "http://localhost:3001");
+export const BACKEND_URL = (() => {
+  // In development/build-time, check process.env
+  try {
+    const url = process?.env?.BUN_PUBLIC_BACKEND_URL;
+    if (url) return url;
+  } catch {}
 
-export const BACKEND_URL = envBackendUrl.replace(/\/$/, "");
+  // Browser fallback: use same origin or localhost
+  if (typeof window !== "undefined") {
+    return window.location.origin;
+  }
+
+  return "http://localhost:3001";
+})().replace(/\/$/, "");
