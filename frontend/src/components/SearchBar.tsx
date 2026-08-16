@@ -1,36 +1,27 @@
 import React, { useRef, useEffect, useState, useCallback } from "react";
 import type { KeyboardEvent, ChangeEvent } from "react";
-import { ArrowUp, Plus, Mic, MicOff, Paperclip, X, FileIcon } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { ArrowUp, Mic, MicOff, Paperclip, X, FileIcon, Plus } from "lucide-react";
 
-// Lightweight: uses the browser's built-in Web Speech API — no package needed
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SpeechRecognitionInstance = any;
-
 declare global {
-  interface Window {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    SpeechRecognition: any;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    webkitSpeechRecognition: any;
-  }
+  interface Window { SpeechRecognition: any; webkitSpeechRecognition: any; }
 }
 
 const STOP_GRACE_MS = 1000;
 
 interface SearchBarProps {
-  onSubmit: (query: string, files: File[]) => void;
+  onSubmit: (query: string, files?: File[]) => void;
   isLoading?: boolean;
   placeholder?: string;
   compact?: boolean;
-  accept?: string; // e.g., "image/*,.pdf"
+  accept?: string;
   maxFiles?: number;
 }
 
 export default function SearchBar({
   onSubmit,
   isLoading = false,
-  placeholder = "Ask anything...",
+  placeholder = "Ask anything…",
   compact = false,
   accept = "*",
   maxFiles = 5,
@@ -39,20 +30,18 @@ export default function SearchBar({
   const [listening, setListening] = useState(false);
   const [supported, setSupported] = useState(true);
   const [files, setFiles] = useState<File[]>([]);
+  const [focused, setFocused] = useState(false);
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef   = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef  = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
-  const stableTextRef = useRef("");
-  const stopTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stableTextRef  = useRef("");
+  const stopTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Check speech recognition support
   useEffect(() => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) setSupported(false);
+    if (!window.SpeechRecognition && !window.webkitSpeechRecognition) setSupported(false);
   }, []);
 
-  // Auto-resize textarea
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -60,23 +49,16 @@ export default function SearchBar({
     }
   }, [value]);
 
-  // Clean up timer and speech instance on unmount
-  useEffect(() => {
-    return () => {
-      if (stopTimeoutRef.current) clearTimeout(stopTimeoutRef.current);
-      recognitionRef.current?.stop();
-      recognitionRef.current = null;
-    };
+  useEffect(() => () => {
+    if (stopTimerRef.current) clearTimeout(stopTimerRef.current);
+    recognitionRef.current?.stop();
   }, []);
 
   const clearStopTimer = useCallback(() => {
-    if (stopTimeoutRef.current) {
-      clearTimeout(stopTimeoutRef.current);
-      stopTimeoutRef.current = null;
-    }
+    if (stopTimerRef.current) { clearTimeout(stopTimerRef.current); stopTimerRef.current = null; }
   }, []);
 
-  const stopListeningImmediately = useCallback(() => {
+  const stopListening = useCallback(() => {
     clearStopTimer();
     recognitionRef.current?.stop();
     recognitionRef.current = null;
@@ -85,170 +67,97 @@ export default function SearchBar({
     textareaRef.current?.focus();
   }, [clearStopTimer]);
 
-  const beginRecognitionSession = useCallback(() => {
+  const startSession = useCallback(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return;
-
     clearStopTimer();
-
-    const recognition = new SR();
-    recognition.lang = "en-US";
-    recognition.interimResults = true;
-    recognition.continuous = true;
-
-    recognition.onstart = () => setListening(true);
-
-    recognition.onresult = (event: any) => {
+    const r = new SR();
+    r.lang = "en-US"; r.interimResults = true; r.continuous = true;
+    r.onstart = () => setListening(true);
+    r.onresult = (e: any) => {
       let interim = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          stableTextRef.current += (stableTextRef.current ? " " : "") + t.trim();
-        } else {
-          interim += t;
-        }
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) stableTextRef.current += (stableTextRef.current ? " " : "") + t.trim();
+        else interim += t;
       }
-      const display = interim
-        ? stableTextRef.current
-          ? `${stableTextRef.current} ${interim}`
-          : interim
-        : stableTextRef.current;
-      setValue(display);
+      setValue(interim ? (stableTextRef.current ? `${stableTextRef.current} ${interim}` : interim) : stableTextRef.current);
     };
-
-    recognition.onerror = (e: any) => {
-      if (e.error !== "no-speech") {
-        stopListeningImmediately();
-      }
+    r.onerror = (e: any) => { if (e.error !== "no-speech") stopListening(); };
+    r.onend = () => {
+      if (recognitionRef.current === r && !stopTimerRef.current) {
+        setTimeout(() => { if (recognitionRef.current === r && !stopTimerRef.current) startSession(); }, 250);
+      } else if (recognitionRef.current === r) { setListening(false); textareaRef.current?.focus(); }
     };
-
-    recognition.onend = () => {
-      if (recognitionRef.current === recognition && !stopTimeoutRef.current) {
-        setTimeout(() => {
-          if (recognitionRef.current === recognition && !stopTimeoutRef.current) {
-            beginRecognitionSession();
-          }
-        }, 250);
-      } else if (recognitionRef.current === recognition) {
-        setListening(false);
-        textareaRef.current?.focus();
-      }
-    };
-
-    recognitionRef.current = recognition;
-    try {
-      recognition.start();
-    } catch {
-      if (recognitionRef.current === recognition) {
-        recognitionRef.current = null;
-        setListening(false);
-      }
-    }
-  }, [clearStopTimer, stopListeningImmediately]);
-
-  const startListening = beginRecognitionSession;
-
-  const requestStopListening = useCallback(() => {
-    if (stopTimeoutRef.current) return;
-    stopTimeoutRef.current = setTimeout(() => {
-      stopTimeoutRef.current = null;
-      stopListeningImmediately();
-    }, STOP_GRACE_MS);
-  }, [stopListeningImmediately]);
+    recognitionRef.current = r;
+    try { r.start(); } catch { recognitionRef.current = null; setListening(false); }
+  }, [clearStopTimer, stopListening]);
 
   function toggleMic() {
-    if (stopTimeoutRef.current) {
-      clearStopTimer();
-      return;
-    }
-    if (listening) requestStopListening();
-    else startListening();
+    if (stopTimerRef.current) { clearStopTimer(); return; }
+    if (listening) {
+      stopTimerRef.current = setTimeout(() => { stopTimerRef.current = null; stopListening(); }, STOP_GRACE_MS);
+    } else startSession();
   }
 
-  // --- Attachment Handlers ---
-  const handleAttachClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+  function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     if (!e.target.files) return;
-    const selectedFiles = Array.from(e.target.files);
-    setFiles((prev) => [...prev, ...selectedFiles].slice(0, maxFiles));
-    // Reset file input so selecting the same file again triggers onChange
+    setFiles((prev) => [...prev, ...Array.from(e.target.files!)].slice(0, maxFiles));
     e.target.value = "";
-  };
-
-  const removeFile = (indexToRemove: number) => {
-    setFiles((prev) => prev.filter((_, idx) => idx !== indexToRemove));
-  };
+  }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
-    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
   }
 
   function handleSubmit() {
     const trimmed = value.trim();
     if ((!trimmed && files.length === 0) || isLoading) return;
-    
-    stopListeningImmediately();
+    stopListening();
     onSubmit(trimmed, files);
-    
-    // Clear form state
     setValue("");
     setFiles([]);
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
-    }
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
   }
 
   const canSubmit = (value.trim().length > 0 || files.length > 0) && !isLoading;
 
+  const borderColor = listening
+    ? "rgba(248,113,113,0.45)"
+    : focused
+    ? "rgba(94,234,212,0.45)"
+    : "#26262B";
+
+  const shadow = listening
+    ? "0 0 0 1px rgba(248,113,113,0.3), 0 4px 24px rgba(0,0,0,0.35)"
+    : focused
+    ? "0 0 0 1px rgba(94,234,212,0.2), 0 4px 24px rgba(94,234,212,0.06)"
+    : "0 4px 24px rgba(0,0,0,0.35)";
+
   return (
-    <div
-      className={cn(
-        "w-full flex justify-center pointer-events-none",
-        compact ? "px-3 pb-3" : "px-4 pb-5 sm:px-6 sm:pb-8"
-      )}
-    >
-      {/* Hidden File Input */}
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleFileChange}
-        accept={accept}
-        multiple
-        className="hidden"
-      />
+    <div className={`w-full flex justify-center pointer-events-none ${compact ? "px-2 pb-2" : "px-4 pb-4 sm:px-6 sm:pb-6"}`}>
+      <input type="file" ref={fileInputRef} onChange={handleFileChange} accept={accept} multiple className="hidden" />
 
       <div
-        className={cn(
-          "pointer-events-auto relative w-full rounded-2xl border border-stone-800/80",
-          "bg-stone-900/75 backdrop-blur-xl",
-          "shadow-[0_8px_40px_rgba(0,0,0,0.55)] transition-all duration-200",
-          listening
-            ? "border-rose-500/50 shadow-[0_8px_40px_rgba(239,68,68,0.15)]"
-            : "focus-within:border-cyan-500/40 focus-within:shadow-[0_8px_40px_rgba(227,168,87,0.12)]",
-          compact ? "max-w-xl rounded-xl" : "max-w-2xl"
-        )}
+        className="pointer-events-auto relative w-full transition-all duration-200"
+        style={{
+          maxWidth: compact ? 640 : 720,
+          background: "#131316",
+          border: `1px solid ${borderColor}`,
+          borderRadius: compact ? 10 : 16,
+          boxShadow: shadow,
+        }}
       >
-        {/* Attached Files Preview Pills */}
+        {/* File pills */}
         {files.length > 0 && (
-          <div className="flex flex-wrap gap-2 px-5 pt-3">
-            {files.map((file, idx) => (
-              <div
-                key={`${file.name}-${idx}`}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-stone-800/90 text-xs text-stone-200 border border-stone-700/60 max-w-[200px]"
-              >
-                <FileIcon className="w-3.5 h-3.5 shrink-0 text-cyan-400" />
-                <span className="truncate">{file.name}</span>
-                <button
-                  type="button"
-                  onClick={() => removeFile(idx)}
-                  className="p-0.5 hover:bg-stone-700 text-stone-400 hover:text-stone-100 rounded transition-colors ml-auto"
-                >
+          <div className="flex flex-wrap gap-1.5 px-4 pt-3">
+            {files.map((f, i) => (
+              <div key={`${f.name}-${i}`} className="flex items-center gap-1.5 px-2.5 py-1 rounded-[6px] text-xs text-[#9C9CA3] max-w-[200px]"
+                style={{ background: "#1B1B1F", border: "1px solid #26262B" }}>
+                <FileIcon className="w-3 h-3 shrink-0 text-primary" />
+                <span className="truncate">{f.name}</span>
+                <button onClick={() => setFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                  className="ml-auto p-0.5 hover:text-foreground rounded transition-colors">
                   <X className="w-3 h-3" />
                 </button>
               </div>
@@ -262,66 +171,49 @@ export default function SearchBar({
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={listening ? "Listening..." : placeholder}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          placeholder={listening ? "Listening…" : placeholder}
           rows={1}
-          className={cn(
-            "w-full resize-none bg-transparent outline-none border-none",
-            "text-stone-100 placeholder:text-stone-500",
-            "px-5 pt-4 pb-2",
-            compact ? "text-sm min-h-[44px]" : "text-base min-h-[56px]"
-          )}
-          style={{ maxHeight: 200 }}
+          className="w-full resize-none bg-transparent outline-none border-none text-foreground placeholder:text-[#5D5D66] px-4 pt-3.5 pb-2"
+          style={{
+            fontSize: compact ? 13 : 14,
+            minHeight: compact ? 42 : 52,
+            maxHeight: 200,
+            fontFamily: "inherit",
+          }}
         />
 
-        {/* Bottom toolbar */}
-        <div className="flex items-center justify-between px-3 pb-3 pt-1 gap-2">
-          {/* Left tools */}
-          <div className="flex items-center gap-1">
+        {/* Toolbar */}
+        <div className="flex items-center justify-between px-3 pb-2.5 pt-1 gap-2">
+          <div className="flex items-center gap-0.5">
             <button
               type="button"
-              onClick={handleAttachClick}
+              onClick={() => fileInputRef.current?.click()}
               disabled={files.length >= maxFiles}
-              className={cn(
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all duration-150",
-                files.length >= maxFiles
-                  ? "text-stone-600 cursor-not-allowed"
-                  : "text-stone-400 hover:text-stone-100 hover:bg-stone-800/70"
-              )}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[6px] text-[11px] text-[#5D5D66] hover:text-[#9C9CA3] hover:bg-[#1B1B1F] transition-all duration-150 disabled:opacity-30 disabled:cursor-not-allowed"
             >
-              {files.length > 0 ? (
-                <Paperclip className="w-3.5 h-3.5 text-cyan-400" />
-              ) : (
-                <Plus className="w-3.5 h-3.5" />
-              )}
-              <span className="hidden sm:inline">
-                {files.length > 0 ? `Attached (${files.length})` : "Attach"}
-              </span>
+              {files.length > 0
+                ? <><Paperclip className="w-3 h-3 text-primary" /><span className="hidden sm:inline">({files.length})</span></>
+                : <><Plus className="w-3 h-3" /><span className="hidden sm:inline">Attach</span></>
+              }
             </button>
           </div>
 
-          {/* Right: mic + send */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             {supported && (
               <button
                 type="button"
                 onClick={toggleMic}
-                className={cn(
-                  "relative p-2 rounded-lg transition-all duration-150",
+                className={`relative p-1.5 rounded-[6px] transition-all duration-150 ${
                   listening
-                    ? "text-rose-400 bg-rose-500/10 hover:bg-rose-500/20"
-                    : "text-stone-400 hover:text-stone-100 hover:bg-stone-800/70"
-                )}
+                    ? "text-[#F87171] bg-[rgba(248,113,113,0.08)]"
+                    : "text-[#5D5D66] hover:text-[#9C9CA3] hover:bg-[#1B1B1F]"
+                }`}
                 aria-label={listening ? "Stop recording" : "Voice input"}
-                title={listening ? "Click to stop" : "Click to speak"}
               >
-                {listening && (
-                  <span className="absolute inset-0 rounded-lg animate-ping bg-rose-500/20" />
-                )}
-                {listening ? (
-                  <MicOff className="w-4 h-4 relative z-10" />
-                ) : (
-                  <Mic className="w-4 h-4" />
-                )}
+                {listening && <span className="absolute inset-0 rounded-[6px] animate-ping bg-[rgba(248,113,113,0.15)]" />}
+                {listening ? <MicOff className="w-3.5 h-3.5 relative z-10" /> : <Mic className="w-3.5 h-3.5" />}
               </button>
             )}
 
@@ -329,19 +221,21 @@ export default function SearchBar({
               type="button"
               onClick={handleSubmit}
               disabled={!canSubmit}
-              className={cn(
-                "flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-200",
-                canSubmit
-                  ? "bg-cyan-500 text-stone-950 hover:bg-cyan-400 shadow-md shadow-cyan-500/30"
-                  : "bg-stone-800 text-stone-500 cursor-not-allowed"
-              )}
+              className="flex items-center justify-center w-7 h-7 rounded-[6px] transition-all duration-150 active:scale-95"
+              style={{
+                background: canSubmit
+                  ? "linear-gradient(135deg, #5EEAD4 0%, #7C9CFF 100%)"
+                  : "#1B1B1F",
+                color: canSubmit ? "#0A0A0B" : "#5D5D66",
+                cursor: canSubmit ? "pointer" : "not-allowed",
+                boxShadow: canSubmit ? "0 0 12px rgba(94,234,212,0.2)" : "none",
+              }}
               aria-label="Send"
             >
-              {isLoading ? (
-                <div className="w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
-              ) : (
-                <ArrowUp className="w-4 h-4" />
-              )}
+              {isLoading
+                ? <div className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                : <ArrowUp className="w-3.5 h-3.5" />
+              }
             </button>
           </div>
         </div>
