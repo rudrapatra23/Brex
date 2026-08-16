@@ -2,10 +2,8 @@ FROM oven/bun:1
 
 WORKDIR /app
 
-COPY package.json bun.lock* ./
-RUN bun install --frozen-lockfile
-
 COPY . .
+RUN bun install --frozen-lockfile
 RUN bunx prisma generate
 
 ENV PORT=3001
