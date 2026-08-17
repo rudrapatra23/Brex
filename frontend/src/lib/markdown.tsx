@@ -206,8 +206,11 @@ export function renderMarkdown(markdown: string, opts: RenderMarkdownOptions = {
       continue;
     }
 
-    // Paragraph (collect consecutive non-special lines)
-    const paraLines: string[] = [];
+    // Paragraph (collect consecutive non-special lines).
+    // The first line is always consumed — a line that looks special but matched no
+    // block rule above (e.g. "#### h4") would otherwise loop forever.
+    const paraLines: string[] = [line];
+    i++;
     while (i < lines.length) {
       const currentLine = lines[i];
       if (

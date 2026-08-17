@@ -4,7 +4,10 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "test": "bun test",
+    "test:coverage": "bun test --coverage",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/bun": "latest",

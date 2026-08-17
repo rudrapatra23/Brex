@@ -12,13 +12,17 @@
 import express from "express";
 import type { NextFunction, Request, Response } from "express";
 import { tavily } from "@tavily/core";
-import { PROMPT_TEMPLATE, SYSTEM_PROMPT } from "./prompt";
-import { z } from "zod";
+import { SYSTEM_PROMPT } from "./prompt";
 import { streamText } from "ai";
 import { groq } from "@ai-sdk/groq";
 import { prisma } from "./db";
 import { middleware } from "./middleware";
 import cors from "cors";
+import { pumpStreamToClient, writeFollowUps, writeSources } from "./lib/stream";
+import { computeCostCredits, extractTokenUsage, REFILL_INTERVAL_MS } from "./lib/credits";
+import { deriveTitle, slugifyQuery, toChatHistory } from "./lib/conversation";
+import { buildPrompt, trimSearchResults } from "./lib/search";
+import { askSchema, deleteConversationSchema, followUpSchema } from "./lib/schemas";
 
 const client = tavily({ apiKey: process.env.TAVILY_API_KEY });
 const app = express();
@@ -58,7 +62,6 @@ function asyncHandler<T extends (req: Request, res: Response, next: NextFunction
 app.use(express.json());
 
 const DAILY_REFILL_CREDITS = Number(process.env.DAILY_REFILL_CREDITS) || 50;
-const REFILL_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 app.get("/health", (_req, res) => {
     res.status(200).json({ ok: true, service: "brex-backend", timestamp: new Date().toISOString() });
@@ -86,134 +89,12 @@ async function refillDailyCreditsIfEligible(userId: string) {
 const PORT = Number(process.env.PORT) || 3001;
 const MODEL_TIMEOUT_MS = Number(process.env.MODEL_TIMEOUT_MS) || 30_000;
 
-// Pricing config — Groq llama-3.3-70b-versatile
-const MODEL_CONFIG = {
-    inputCostPer1M: 0.59,
-    outputCostPer1M: 0.79,
-};
-
-const ANSWER_OPEN = "<ANSWER>";
-const ANSWER_CLOSE = "</ANSWER>";
-const SOURCES_OPEN = "\n<SOURCES>\n";
-const SOURCES_CLOSE = "\n</SOURCES>\n";
-const FOLLOWUPS_OPEN = "\n<FOLLOW_UPS>\n";
-const FOLLOWUPS_CLOSE = "\n</FOLLOW_UPS>\n";
-
-// ---------- validation ----------
-
-const askSchema = z.object({
-    query: z.string().trim().min(1).max(2000),
-});
-
-const followUpSchema = z.object({
-    query: z.string().trim().min(1).max(2000),
-    conversationId: z.string().trim().min(1),
-});
-
 // ---------- shared helpers ----------
 
 async function searchAndTrim(query: string) {
     const webSearchResponse = await client.search(query, { searchDepth: "advanced" });
     const results = webSearchResponse.results;
-    const trimmed = results.map((r) => ({
-        title: r.title,
-        url: r.url,
-        content: r.content?.slice(0, 500),
-    }));
-    return { results, trimmed };
-}
-
-function writeSources(res: Response, results: { url: string }[]) {
-    res.write(SOURCES_OPEN);
-    res.write(JSON.stringify(results.map((r) => ({ url: r.url }))));
-    res.write(SOURCES_CLOSE);
-}
-
-async function pumpStreamToClient(
-    textStream: AsyncIterable<string>,
-    res: Response,
-    timeoutMs: number,
-): Promise<{ cleanAnswer: string; followUps: string[] }> {
-    const iterator = textStream[Symbol.asyncIterator]();
-    let buffer = "";
-    let cleanAnswer = "";
-    let tail = "";
-    let insideAnswer = false;
-    let sawAnswerTag = false;
-    let answerClosed = false;
-
-    const nextWithTimeout = () =>
-        Promise.race([
-            iterator.next(),
-            new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error("Model stream timed out")), timeoutMs),
-            ),
-        ]);
-
-    let result = await nextWithTimeout();
-
-    while (!result.done) {
-        if (answerClosed) {
-            tail += result.value;
-            result = await nextWithTimeout();
-            continue;
-        }
-
-        buffer += result.value;
-
-        if (!sawAnswerTag) {
-            const openIdx = buffer.indexOf(ANSWER_OPEN);
-            if (openIdx !== -1) {
-                sawAnswerTag = true;
-                insideAnswer = true;
-                buffer = buffer.slice(openIdx + ANSWER_OPEN.length);
-            } else {
-                if (buffer.length > ANSWER_OPEN.length * 2) {
-                    res.write(buffer);
-                    cleanAnswer += buffer;
-                    buffer = "";
-                }
-                result = await nextWithTimeout();
-                continue;
-            }
-        }
-
-        if (insideAnswer) {
-            const closeIdx = buffer.indexOf(ANSWER_CLOSE);
-            if (closeIdx !== -1) {
-                const chunk = buffer.slice(0, closeIdx);
-                res.write(chunk);
-                cleanAnswer += chunk;
-                insideAnswer = false;
-                answerClosed = true;
-                tail += buffer.slice(closeIdx + ANSWER_CLOSE.length);
-                buffer = "";
-            } else {
-                res.write(buffer);
-                cleanAnswer += buffer;
-                buffer = "";
-            }
-        }
-
-        result = await nextWithTimeout();
-    }
-
-    if (buffer.length > 0 && !answerClosed) {
-        // The stream ended without a closing </ANSWER> tag.
-        // Strip it if it somehow ended up in the buffer, then flush.
-        const strayClose = buffer.indexOf(ANSWER_CLOSE);
-        const toWrite = strayClose !== -1 ? buffer.slice(0, strayClose) : buffer;
-        if (toWrite.length > 0) {
-            res.write(toWrite);
-            cleanAnswer += toWrite;
-        }
-    }
-
-    const followUps = Array.from(tail.matchAll(/<question>([\s\S]*?)<\/question>/g)).map((m) =>
-        (m[1] ?? "").trim(),
-    );
-
-    return { cleanAnswer: cleanAnswer.trim(), followUps };
+    return { results, trimmed: trimSearchResults(results) };
 }
 
 type StreamInput =
@@ -239,19 +120,7 @@ async function streamResponse(
             MODEL_TIMEOUT_MS,
         );
 
-        const usage = await candidateStream.usage;
-        const inputTokens =
-            (usage as any).inputTokens ?? (usage as any).promptTokens ?? 0;
-        const outputTokens =
-            (usage as any).outputTokens ?? (usage as any).completionTokens ?? 0;
-
-        const costCredits = Math.max(
-            1,
-            Math.ceil(
-                (inputTokens / 1_000_000) * MODEL_CONFIG.inputCostPer1M +
-                    (outputTokens / 1_000_000) * MODEL_CONFIG.outputCostPer1M,
-            ),
-        );
+        const costCredits = computeCostCredits(extractTokenUsage(await candidateStream.usage));
 
         return { started: true, cleanAnswer, followUps, costCredits };
     } catch (error) {
@@ -365,10 +234,7 @@ app.post(
             return res.status(502).send("Web search failed");
         }
 
-        const prompt = PROMPT_TEMPLATE.replace(
-            "{{WEB_SEARCH_RESULTS}}",
-            JSON.stringify(searchData.trimmed),
-        ).replace("{{USER_QUERY}}", query);
+        const prompt = buildPrompt(searchData.trimmed, query);
 
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.setHeader("Cache-Control", "no-cache");
@@ -396,13 +262,11 @@ app.post(
 
         const sourceUrls = searchData.results.map((r) => ({ url: r.url }));
         writeSources(res, searchData.results);
-        res.write(FOLLOWUPS_OPEN);
-        res.write(JSON.stringify(followUps));
-        res.write(FOLLOWUPS_CLOSE);
+        writeFollowUps(res, followUps);
 
         try {
-            const slug = query.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60);
-            const title = query.slice(0, 100);
+            const slug = slugifyQuery(query);
+            const title = deriveTitle(query);
 
             const conversation = await prisma.conversation.create({
                 data: {
@@ -461,10 +325,7 @@ app.post(
             return res.status(500).json({ message: "Could not verify credits" });
         }
 
-        const history = conversation.messages.map((msg) => ({
-            role: msg.role === "User" ? ("user" as const) : ("assistant" as const),
-            content: msg.content,
-        }));
+        const history = toChatHistory(conversation.messages);
 
         let searchData;
         try {
@@ -474,10 +335,7 @@ app.post(
             return res.status(502).send("Web search failed");
         }
 
-        const followUpPrompt = PROMPT_TEMPLATE.replace(
-            "{{WEB_SEARCH_RESULTS}}",
-            JSON.stringify(searchData.trimmed),
-        ).replace("{{USER_QUERY}}", query);
+        const followUpPrompt = buildPrompt(searchData.trimmed, query);
 
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.setHeader("Cache-Control", "no-cache");
@@ -505,9 +363,7 @@ app.post(
 
         const sourceUrls = searchData.results.map((r) => ({ url: r.url }));
         writeSources(res, searchData.results);
-        res.write(FOLLOWUPS_OPEN);
-        res.write(JSON.stringify(followUps));
-        res.write(FOLLOWUPS_CLOSE);
+        writeFollowUps(res, followUps);
 
         try {
             await prisma.message.createMany({
@@ -531,10 +387,6 @@ app.post(
 );
 
 // ---------- delete conversation ----------
-
-const deleteConversationSchema = z.object({
-    conversationId: z.string().trim().min(1).max(128),
-});
 
 app.delete(
     "/conversation/:conversationId",
