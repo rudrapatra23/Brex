@@ -19,14 +19,27 @@ function getTitle(url: string): string {
   } catch { return url; }
 }
 
+// Source URLs come from web-search results, so restrict them to http(s).
+function safeUrl(url: string): string | undefined {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export default function SourceCard({ url, index }: SourceCardProps) {
+  const href = safeUrl(url);
   const domain = getDomain(url);
   const title  = getTitle(url);
+
+  if (!href) return null;
   const favicon = `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
 
   return (
     <a
-      href={url}
+      href={href}
       target="_blank"
       rel="noopener noreferrer"
       className="group flex flex-col gap-2 p-3 rounded-[10px] min-w-[180px] max-w-[220px] flex-shrink-0 transition-all duration-150 hover:-translate-y-px"

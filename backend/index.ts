@@ -29,19 +29,13 @@ app.set("trust proxy", 1);
 app.use(
     cors({
         origin: (origin, callback) => {
+            // Same-origin / non-browser clients send no Origin header.
             if (!origin) {
                 callback(null, true);
                 return;
             }
 
-            if (allowedOrigins.includes(origin)) {
-                callback(null, true);
-                return;
-            }
-
-            // Allow deploys where the frontend is a different host, while still keeping
-            // localhost behavior intact by default.
-            callback(null, true);
+            callback(null, allowedOrigins.includes(origin));
         },
         credentials: true,
     }),
@@ -343,7 +337,7 @@ app.post(
     asyncHandler(async (req, res) => {
         const parsed = askSchema.safeParse(req.body);
         if (!parsed.success) {
-            return res.status(400).json({ message: "Invalid request", issues: parsed.error.issues });
+            return res.status(400).json({ message: "Invalid request" });
         }
         const { query } = parsed.data;
 
@@ -438,7 +432,7 @@ app.post(
     asyncHandler(async (req, res) => {
         const parsed = followUpSchema.safeParse(req.body);
         if (!parsed.success) {
-            return res.status(400).json({ message: "Invalid request", issues: parsed.error.issues });
+            return res.status(400).json({ message: "Invalid request" });
         }
         const { query, conversationId } = parsed.data;
 

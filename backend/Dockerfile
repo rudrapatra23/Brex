@@ -2,11 +2,10 @@ FROM oven/bun:1
 
 WORKDIR /app
 
-ARG SUPABASE_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres
-ENV SUPABASE_DATABASE_URL=$SUPABASE_DATABASE_URL
-
 COPY . .
 RUN bun install --frozen-lockfile
+# prisma.config.ts falls back to a local placeholder URL; the real connection
+# string is supplied at runtime and never baked into the image.
 RUN bunx prisma generate
 
 ENV PORT=3001

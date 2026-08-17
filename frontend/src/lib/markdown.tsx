@@ -15,6 +15,17 @@ interface InlineOptions {
   onCitationClick?: (index: number) => void;
 }
 
+// Model/web-search output is untrusted: only allow navigable http(s) links so a
+// crafted `javascript:` or `data:` URL cannot execute in the page.
+function safeUrl(url: string): string | undefined {
+  try {
+    const parsed = new URL(url, window.location.origin);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function parseInline(text: string, opts: InlineOptions = {}): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   // Added: \[(\d+(?:,\s*\d+)*)\] for plain [1] / [1, 3] style citations
@@ -89,10 +100,15 @@ function parseInline(text: string, opts: InlineOptions = {}): React.ReactNode[] 
     } else if (m7 !== undefined) {
       nodes.push(<code key={matchIndex}>{m7}</code>);
     } else if (m8 !== undefined) {
+      const href = safeUrl(m9);
       nodes.push(
-        <a key={matchIndex} href={m9} target="_blank" rel="noopener noreferrer">
-          {m8}
-        </a>
+        href ? (
+          <a key={matchIndex} href={href} target="_blank" rel="noopener noreferrer">
+            {m8}
+          </a>
+        ) : (
+          <span key={matchIndex}>{m8}</span>
+        )
       );
     }
 
