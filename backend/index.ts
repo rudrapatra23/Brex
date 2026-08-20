@@ -226,7 +226,7 @@ async function streamResponse(
 ): Promise<{ started: boolean; cleanAnswer: string; followUps: string[]; costCredits: number }> {
     try {
         const candidateStream = streamText({
-            model: groq("llama-3.3-70b-versatile"),
+            model: groq("openai/gpt-oss-20b"),
             system: SYSTEM_PROMPT,
             ...(input.mode === "prompt"
                 ? { prompt: input.prompt }
