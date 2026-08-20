@@ -410,6 +410,11 @@ export default function Dashboard() {
   const { conversationId } = useParams<{ conversationId?: string }>();
 
   const [user, setUser] = useState<User | null>(null);
+  // Tracks whether the initial Supabase auth check has resolved. Without this,
+  // `user` starts as null on every mount/refresh, and there is a brief window
+  // (especially right after the OAuth redirect back to /app) where the UI
+  // and doSearch() incorrectly treat an actually-signed-in person as logged out.
+  const [authLoading, setAuthLoading] = useState(true);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -422,8 +427,14 @@ export default function Dashboard() {
   const messagesCacheRef = useRef<Map<string, Message[]>>(new Map());
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setUser(data.user));
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => setUser(session?.user ?? null));
+    supabase.auth.getUser().then(({ data }) => {
+      setUser(data.user);
+      setAuthLoading(false);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
+      setUser(session?.user ?? null);
+      setAuthLoading(false);
+    });
     return () => subscription.unsubscribe();
   }, []);
 
@@ -477,12 +488,14 @@ export default function Dashboard() {
   }, [conversationId, user]);
 
   async function doSearch(query: string, isFollowUp = false) {
-    if (!user) { setShowLogin(true); return; }
-    setIsLoading(true);
-
+    // Always trust the live Supabase session as the source of truth for auth,
+    // rather than the `user` state value (which can lag behind on first
+    // render/refresh, or go stale if a token silently expires mid-session).
     const { data: { session } } = await supabase.auth.getSession();
     const jwt = session?.access_token;
-    if (!jwt) { setIsLoading(false); setShowLogin(true); return; }
+    if (!jwt) { setShowLogin(true); return; }
+
+    setIsLoading(true);
 
     setMessages((prev) => [...prev,
       { role: "User", content: query },
@@ -619,6 +632,21 @@ export default function Dashboard() {
   }
 
   const isConversationView = messages.length > 0 || (!!conversationId && !!activeConversationId);
+
+  // While the initial auth check is still resolving, avoid flashing the
+  // logged-out "Sign in to start searching…" state for someone who is
+  // actually authenticated (most noticeable right after the OAuth redirect
+  // back to /app, or on a hard refresh).
+  if (authLoading) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center" style={{ background: "#0A0A0B" }}>
+        <div className="flex items-center gap-2 text-[#5D5D66] text-sm">
+          <Zap className="w-4 h-4 text-primary animate-pulse" />
+          Loading…
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen w-screen overflow-hidden relative" style={{ background: "#0A0A0B" }}>
