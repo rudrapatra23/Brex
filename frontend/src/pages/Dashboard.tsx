@@ -438,6 +438,16 @@ export default function Dashboard() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Once the initial auth check has resolved, /app and /search/:id are
+  // members-only routes — someone landing here directly without a session
+  // (bookmark, shared link, typed URL) should bounce to the landing page
+  // rather than see a half-built "signed out" dashboard.
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate("/", { replace: true });
+    }
+  }, [authLoading, user, navigate]);
+
   const loadConversations = useCallback(async () => {
     if (!user) return;
     try {
@@ -637,7 +647,15 @@ export default function Dashboard() {
   // logged-out "Sign in to start searching…" state for someone who is
   // actually authenticated (most noticeable right after the OAuth redirect
   // back to /app, or on a hard refresh).
+<<<<<<< HEAD
   if (authLoading) {
+=======
+  if (authLoading || !user) {
+    // Either the initial session check hasn't resolved yet, or it has and
+    // there's no session — in the latter case the effect above is about to
+    // navigate to "/". Either way, show a neutral loading state instead of
+    // ever rendering the dashboard's logged-out view.
+>>>>>>> 308c3e0 (resolve session before rendering dashboard)
     return (
       <div className="flex h-screen w-screen items-center justify-center" style={{ background: "#0A0A0B" }}>
         <div className="flex items-center gap-2 text-[#5D5D66] text-sm">
